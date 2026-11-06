@@ -223,11 +223,14 @@ pub fn set_widget_enabled(
             ..WidgetEdit::default()
         },
     )?;
-    if enabled {
-        relocate_on_open(app, &store, id)?;
-    }
+    // The widget is enabled by now, so it opens even if it could not be moved.
+    let relocated = if enabled {
+        relocate_on_open(app, &store, id)
+    } else {
+        Ok(())
+    };
     sync_widgets(app);
-    Ok(())
+    relocated
 }
 
 /// Move a widget into trash and remove its main-window preview state.
