@@ -135,6 +135,17 @@ fn gathering_avoids_widgets_already_on_the_target() {
 }
 
 #[test]
+fn gathering_keeps_the_size_of_a_widget_larger_than_the_target() {
+    let mut large = frame("primary", None);
+    (large.w, large.h) = (3000.0, 1600.0);
+    let widgets = BTreeMap::from([("large".to_string(), large)]);
+
+    let (frames, _) = gathered_frames(&widgets, EXTERNAL, &displays(), area());
+
+    assert_eq!((frames["large"].w, frames["large"].h), (3000.0, 1600.0));
+}
+
+#[test]
 fn gathering_on_the_primary_display_stores_the_primary_name() {
     let widgets = BTreeMap::from([("a".to_string(), frame("Monitor #2", None))]);
 

@@ -59,7 +59,8 @@ pub fn relocation_target(
     (displays.index(&frame.display) != Some(target)).then_some(target)
 }
 
-/// `frame` moved into the first free slot of the display at `target`.
+/// `frame` moved into the first free slot of the display at `target`. It keeps its
+/// size, as it does in a drag: shrinking to fit could not be undone on a larger display.
 fn frame_on_display(
     frame: &WidgetFrame,
     target: usize,
@@ -72,9 +73,7 @@ fn frame_on_display(
         display: displays.stored(target),
         x: placed.position.x,
         y: placed.position.y,
-        w: placed.size.width,
-        h: placed.size.height,
-        pinned_display: frame.pinned_display.clone(),
+        ..frame.clone()
     }
 }
 
