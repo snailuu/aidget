@@ -12,6 +12,8 @@ export interface WidgetSummary {
   height: number;
   enabled: boolean;
   createdAt: number;
+  display: string;
+  pinnedDisplay: string | null;
 }
 
 export interface DeletedWidgetSummary {

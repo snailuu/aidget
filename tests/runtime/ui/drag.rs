@@ -1,6 +1,88 @@
 use std::time::{Duration, Instant};
 
-use aidget::runtime::ui::{native_drag_running, records_move, DisplayNames, UiState};
+use aidget::runtime::ui::{
+    native_drag_running, pinned_after_move, records_move, DisplayNames, UiState,
+};
+use aidget::widgets::model::WidgetFrame;
+
+fn frame(display: &str, pinned: Option<&str>) -> WidgetFrame {
+    WidgetFrame {
+        display: display.to_string(),
+        pinned_display: pinned.map(str::to_string),
+        ..WidgetFrame::default_for(0)
+    }
+}
+
+const BOTH: [&str; 2] = ["Monitor #1", "Monitor #2"];
+
+fn both() -> DisplayNames<'static> {
+    DisplayNames {
+        names: BOTH.to_vec(),
+        primary: Some(0),
+    }
+}
+
+#[test]
+fn dragging_to_another_display_chooses_that_display() {
+    assert_eq!(
+        pinned_after_move(&frame("primary", None), "Monitor #2", &both(), true).as_deref(),
+        Some("Monitor #2")
+    );
+}
+
+#[test]
+fn dragging_within_a_display_keeps_following_the_default() {
+    assert_eq!(
+        pinned_after_move(&frame("primary", None), "primary", &both(), true),
+        None
+    );
+}
+
+#[test]
+fn dragging_within_a_display_saved_under_its_own_name_keeps_following_the_default() {
+    // The CLI saves the default display by name; a drag reports it as `primary`.
+    assert_eq!(
+        pinned_after_move(&frame("Monitor #1", None), "primary", &both(), true),
+        None
+    );
+}
+
+#[test]
+fn dragging_replaces_a_choice_the_widget_has_left() {
+    // The system moved the window away, and the user then settled it here.
+    assert_eq!(
+        pinned_after_move(
+            &frame("primary", Some("Monitor #2")),
+            "primary",
+            &both(),
+            true
+        )
+        .as_deref(),
+        Some("primary")
+    );
+}
+
+#[test]
+fn a_system_move_never_chooses_a_display() {
+    assert_eq!(
+        pinned_after_move(&frame("Monitor #2", None), "primary", &both(), false),
+        None
+    );
+}
+
+#[test]
+fn a_system_move_keeps_the_chosen_display() {
+    assert_eq!(
+        pinned_after_move(
+            &frame("Monitor #2", Some("Monitor #2")),
+            "primary",
+            &both(),
+            false
+        )
+        .as_deref(),
+        Some("Monitor #2")
+    );
+}
 
 const NAMES: [&str; 1] = ["Monitor #1"];
 

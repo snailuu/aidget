@@ -23,7 +23,8 @@ import {
 
 import { renderAgentStrip } from './agent-controls';
 import { createCommunityPage } from './community';
-import { renderDisplaySelect, selectedDisplay } from './display-select';
+import { confirmAction } from './confirm-dialog';
+import { findDisplay, renderDisplaySelect, selectedDisplay } from './display-select';
 import {
   mcpCommandLine,
   type AgentProblem,
@@ -57,6 +58,7 @@ import { renderMiddleEllipsis } from './text-ellipsis';
 import { createToastRegion } from './toast';
 import { createUpdatePage } from './update';
 import { createLocalWidgetDetails } from './widget-details';
+import { createWidgetDisplayControl } from './widget-display-control';
 
 interface WidgetView {
   root: HTMLElement;
@@ -67,6 +69,7 @@ interface WidgetView {
   size: HTMLElement;
   toggle: HTMLButtonElement;
   archiveButton: HTMLButtonElement;
+  displayControl: ReturnType<typeof createWidgetDisplayControl>;
   widget: WidgetSummary;
   previewRequest: number;
 }
@@ -110,6 +113,7 @@ const githubButton = document.querySelector<HTMLButtonElement>('[data-github]')!
 const autoStart = document.querySelector<HTMLButtonElement>('[data-autostart]')!;
 const language = document.querySelector<HTMLSelectElement>('[data-language]')!;
 const defaultDisplaySelect = document.querySelector<HTMLSelectElement>('[data-default-display]')!;
+const moveAllButton = document.querySelector<HTMLButtonElement>('[data-move-all-widgets]')!;
 const githubTokenControl = document.querySelector<HTMLElement>('[data-github-token-control]')!;
 const githubTokenLink = document.querySelector<HTMLButtonElement>('[data-github-token-link]')!;
 const githubTokenForm = document.querySelector<HTMLFormElement>('[data-github-token-form]')!;
@@ -134,6 +138,7 @@ const updateHeaderAction = document.querySelector<HTMLButtonElement>('[data-upda
 
 let autoDownload = false;
 let defaultDisplay: string | null = null;
+let movingWidgets = false;
 
 const updatePage = createUpdatePage(
   aboutPage,
@@ -466,12 +471,103 @@ function renderPreferences() {
   trayClickControlRoot.querySelectorAll<HTMLButtonElement>('[data-value]').forEach((button) => {
     button.disabled = platform === 'linux' || preferencesBusy;
   });
-  renderDisplaySelect(defaultDisplaySelect, state?.displays ?? [], defaultDisplay, {
-    automatic: t('displayAutomatic'),
+  const displays = state?.displays ?? [];
+  const displayLabels = {
     primary: t('displayPrimary'),
     disconnected: t('displayDisconnected'),
+  };
+  renderDisplaySelect(defaultDisplaySelect, displays, defaultDisplay, {
+    ...displayLabels,
+    automatic: t('displayAutomatic'),
   });
   defaultDisplaySelect.disabled = preferencesBusy;
+  const summary = gatherSummary();
+  moveAllButton.disabled =
+    preferencesBusy || movingWidgets || (summary.moving === 0 && summary.pinned === 0);
+  const defaultTarget = defaultDisplay === null ? undefined : findDisplay(displays, defaultDisplay);
+  const followDefault = defaultTarget
+    ? t('followDefaultDisplay').replace('{display}', defaultTarget.label)
+    : t('followDefault');
+  for (const view of views.values()) {
+    const { widget } = view;
+    view.displayControl.update(
+      widget.pinnedDisplay,
+      displays,
+      { ...displayLabels, automatic: followDefault },
+      t('widgetDisplay'),
+    );
+    const size = `${Math.round(widget.width)} × ${Math.round(widget.height)}`;
+    const location = displays.length > 1 ? findDisplay(displays, widget.display) : undefined;
+    const caption = location ? `${size} · ${location.label}` : size;
+    view.size.textContent = caption;
+    view.size.title = caption;
+  }
+}
+
+/** What gathering would change, or nothing without a connected default display. */
+function gatherSummary() {
+  const displays = state?.displays ?? [];
+  const widgets = state?.widgets ?? [];
+  const target = defaultDisplay === null ? undefined : findDisplay(displays, defaultDisplay);
+  if (!target) {
+    return { target, moving: 0, pinned: 0 };
+  }
+  return {
+    target,
+    moving: widgets.filter((widget) => findDisplay(displays, widget.display) !== target).length,
+    pinned: widgets.filter((widget) => widget.pinnedDisplay !== null).length,
+  };
+}
+
+async function moveAllWidgets() {
+  const { target, moving, pinned } = gatherSummary();
+  if (!target) {
+    return;
+  }
+  const message = [];
+  if (moving > 0) {
+    message.push(
+      t('moveAllMessage').replace('{count}', String(moving)).replace('{display}', target.label),
+    );
+  }
+  if (pinned > 0) {
+    message.push(t('moveAllPinnedMessage').replace('{count}', String(pinned)));
+  }
+  const confirmed = await confirmAction(document.body, {
+    title: t('moveAllTitle'),
+    message,
+    confirm: t('moveAllConfirm'),
+    cancel: t('cancel'),
+  });
+  if (!confirmed) {
+    return;
+  }
+  movingWidgets = true;
+  fault.hidden = true;
+  renderPreferences();
+  try {
+    const moved = await invoke<number>('move_widgets_to_default_display');
+    toast.show(
+      moved === 0
+        ? t('moveAllFollowing')
+        : t('moveAllDone').replace('{count}', String(moved)).replace('{display}', target.label),
+    );
+  } catch (error) {
+    showFault(`${t('moveAllFailed')}: ${String(error)}`);
+  } finally {
+    movingWidgets = false;
+    renderPreferences();
+  }
+}
+
+async function changeWidgetDisplay(view: WidgetView, display: string | null) {
+  fault.hidden = true;
+  try {
+    await invoke<void>('set_widget_display', { id: view.widget.id, display });
+  } catch (error) {
+    showFault(`${t('widgetDisplayFailed')}: ${String(error)}`);
+    renderPreferences();
+  }
 }
 
 function renderGithubToken() {
@@ -719,7 +815,10 @@ function createView(widget: WidgetSummary): WidgetView {
     }),
   );
   archiveButton.addEventListener('click', () => void archiveWidget(view));
-  actions.append(archiveButton, toggle);
+  const displayControl = createWidgetDisplayControl(
+    (display) => void changeWidgetDisplay(view, display),
+  );
+  actions.append(displayControl.root, archiveButton, toggle);
   info.append(copy, actions);
   root.append(stage, info);
 
@@ -732,6 +831,7 @@ function createView(widget: WidgetSummary): WidgetView {
     size,
     toggle,
     archiveButton,
+    displayControl,
     widget,
     previewRequest: 0,
   };
@@ -751,7 +851,6 @@ function updateView(view: WidgetView, widget: WidgetSummary) {
   view.stage.setAttribute('aria-label', `${t('communityDetails')}: ${widget.title || widget.id}`);
   view.placeholder.textContent = t('previewUnavailable');
   view.title.textContent = widget.title || widget.id;
-  view.size.textContent = `${Math.round(widget.width)} × ${Math.round(widget.height)}`;
   view.image.width = Math.round(widget.width);
   view.image.height = Math.round(widget.height);
   view.toggle.setAttribute('aria-checked', String(widget.enabled));
@@ -1254,6 +1353,7 @@ language.addEventListener('change', () => {
 defaultDisplaySelect.addEventListener('change', () => {
   void setDefaultDisplay(selectedDisplay(defaultDisplaySelect));
 });
+moveAllButton.addEventListener('click', () => void moveAllWidgets());
 githubTokenLink.addEventListener('click', () => {
   fault.hidden = true;
   void openUrl('https://github.com/settings/tokens').catch((error: unknown) => {

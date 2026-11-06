@@ -18,6 +18,14 @@ fn github_token_changes_are_reserved_for_the_main_window() {
 }
 
 #[test]
+fn moving_widgets_between_displays_is_reserved_for_the_main_window() {
+    for command in ["set_widget_display", "move_widgets_to_default_display"] {
+        assert!(MAIN_COMMANDS.contains(&command));
+        assert!(!WIDGET_COMMANDS.contains(&command));
+    }
+}
+
+#[test]
 fn cached_community_catalogues_are_reserved_for_the_main_window() {
     assert!(MAIN_COMMANDS.contains(&"community_cached"));
     assert!(!WIDGET_COMMANDS.contains(&"community_cached"));

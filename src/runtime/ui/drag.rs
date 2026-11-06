@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager, WebviewWindow};
 
 use crate::common::error::{Error, Result};
+use crate::widgets::model::WidgetFrame;
 use crate::widgets::store::Store;
 
 use super::geometry::{
@@ -13,6 +14,22 @@ use super::geometry::{
 use super::main_window::emit_main;
 use super::relocation::DisplayNames;
 use super::state::UiState;
+
+/// The widget's chosen display after a move to `display`. Dragging it to another
+/// display is a choice; so is settling on a display other than the chosen one.
+pub fn pinned_after_move(
+    current: &WidgetFrame,
+    display: &str,
+    connected: &DisplayNames<'_>,
+    user_drag: bool,
+) -> Option<String> {
+    let changed = connected.index(display) != connected.index(&current.display);
+    if user_drag && (changed || current.pinned_display.is_some()) {
+        Some(display.to_string())
+    } else {
+        current.pinned_display.clone()
+    }
+}
 
 /// Whether a move changes the stored frame. A window still at its frame has not
 /// moved, which also covers a click on the drag handle of a widget whose display
@@ -28,11 +45,14 @@ pub fn records_move(
 }
 
 /// Persist the calling widget window's current frame when it has changed. Moves
-/// also arrive here from the system, which `records_move` tells apart.
+/// also arrive here from the system, which must not count as the user's choice.
 pub fn persist_position(app: &AppHandle, window: &WebviewWindow) -> Result<()> {
     let state = app.state::<UiState>();
-    let user_drag = dragging_active(&state) || native_drag_running(&state);
-    persist(app, window, user_drag)
+    // `end_drag` saves where the drag lands; a stop on the way chooses nothing.
+    if dragging_active(&state) {
+        return Ok(());
+    }
+    persist(app, window, native_drag_running(&state))
 }
 
 fn persist(app: &AppHandle, window: &WebviewWindow, user_drag: bool) -> Result<()> {
@@ -83,13 +103,14 @@ fn persist(app: &AppHandle, window: &WebviewWindow, user_drag: bool) -> Result<(
     } else {
         named_display(app, &monitor)
     };
-    let frame = moved_frame(
+    let mut frame = moved_frame(
         &current,
         display,
         (position.x, position.y),
         (area.position.x, area.position.y),
         scale,
     );
+    frame.pinned_display = pinned_after_move(&current, &frame.display, &connected, user_drag);
     board.widgets.insert(id.clone(), frame);
     board.revision += 1;
     store.save_board(&board)?;
@@ -138,7 +159,7 @@ pub async fn wait_for_drag_release(app: &AppHandle) -> Result<()> {
 }
 
 #[cfg(target_os = "macos")]
-fn run_on_main_thread<T: Send + 'static>(
+pub(super) fn run_on_main_thread<T: Send + 'static>(
     app: &AppHandle,
     task: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T> {

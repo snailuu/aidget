@@ -45,4 +45,8 @@ export type DisplayInfo = {
 /**
  * Stable identifier stored in frames and settings.
  */
-name: string, primary: boolean, x: number, y: number, width: number, height: number, scale: number, };
+name: string,
+/**
+ * Name the system shows for this display; equals `name` when it has none.
+ */
+label: string, primary: boolean, x: number, y: number, width: number, height: number, scale: number, };

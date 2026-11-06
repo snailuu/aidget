@@ -13,6 +13,8 @@
     "allow-set-preferences",
     "allow-set-github-token",
     "allow-set-widget-enabled",
+    "allow-set-widget-display",
+    "allow-move-widgets-to-default-display",
     "allow-delete-widget",
     "allow-restore-widget",
     "allow-deleted-widget-preview",

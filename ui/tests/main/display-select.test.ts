@@ -8,6 +8,7 @@ import type { DisplayInfo } from '../../src/types/rust';
 const labels = { automatic: 'Automatic', primary: 'Primary', disconnected: 'Disconnected' };
 const builtIn: DisplayInfo = {
   name: 'Monitor #1',
+  label: 'Built-in Retina Display',
   primary: true,
   x: 0,
   y: 33,
@@ -17,6 +18,7 @@ const builtIn: DisplayInfo = {
 };
 const external: DisplayInfo = {
   name: 'Monitor #2',
+  label: 'U27P10',
   primary: false,
   x: -719,
   y: -1410,
@@ -30,17 +32,34 @@ function optionTexts(select: HTMLSelectElement) {
 }
 
 describe('display select', () => {
-  it('offers automatic placement and every connected display with its size', () => {
+  it('offers automatic placement and every connected display by its system name', () => {
     const select = document.createElement('select');
 
     renderDisplaySelect(select, [builtIn, external], null, labels);
 
     expect(optionTexts(select)).toEqual([
       'Automatic',
-      'Monitor #1 · 1470 × 859 · Primary',
-      'Monitor #2 · 2560 × 1410',
+      'Built-in Retina Display · Primary',
+      'U27P10',
     ]);
     expect(selectedDisplay(select)).toBeNull();
+  });
+
+  it('adds the size when the system has no name to tell displays apart', () => {
+    const select = document.createElement('select');
+    const unnamed = { ...external, label: external.name };
+
+    renderDisplaySelect(select, [unnamed], null, labels);
+
+    expect(optionTexts(select)[1]).toBe('Monitor #2 · 2560 × 1410');
+  });
+
+  it('stores the stable name while showing the system name', () => {
+    const select = document.createElement('select');
+
+    renderDisplaySelect(select, [builtIn, external], 'Monitor #2', labels);
+
+    expect(selectedDisplay(select)).toBe('Monitor #2');
   });
 
   it('selects the primary display for a frame stored as primary', () => {
@@ -56,7 +75,7 @@ describe('display select', () => {
 
     renderDisplaySelect(select, [builtIn, external], 'Monitor #1', labels);
 
-    expect(select.title).toBe('Monitor #1 · 1470 × 859 · Primary');
+    expect(select.title).toBe('Built-in Retina Display · Primary');
   });
 
   it('keeps a disconnected saved display selected instead of showing automatic', () => {
