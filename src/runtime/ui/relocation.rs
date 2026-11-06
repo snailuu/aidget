@@ -116,6 +116,17 @@ pub fn gathered_frames(
     (frames, moved)
 }
 
+/// The frames of widgets that still load. A broken widget has no window to move,
+/// and `Store::move_widgets` would reject the whole write for it.
+pub fn loadable_frames(store: &Store, board: &Board) -> BTreeMap<String, WidgetFrame> {
+    board
+        .widgets
+        .iter()
+        .filter(|(id, _)| store.load_meta(id).is_ok())
+        .map(|(id, frame)| (id.clone(), frame.clone()))
+        .collect()
+}
+
 /// Rectangles of the enabled widgets on `target`, other than `id`.
 fn occupied_on(
     store: &Store,
@@ -206,15 +217,8 @@ pub fn move_widgets_to_default_display(app: &AppHandle) -> Result<usize> {
         .index(&default)
         .ok_or_else(|| Error::InvalidParams(format!("display `{default}` is not connected")))?;
     let board = store.load_board()?;
-    // A broken widget has no window to move and would fail the whole write.
-    let widgets: BTreeMap<_, _> = board
-        .widgets
-        .iter()
-        .filter(|(id, _)| store.load_meta(id).is_ok())
-        .map(|(id, frame)| (id.clone(), frame.clone()))
-        .collect();
     let (frames, moved) = gathered_frames(
-        &widgets,
+        &loadable_frames(&store, &board),
         target,
         &displays,
         logical_work_area(&monitors[target].1),

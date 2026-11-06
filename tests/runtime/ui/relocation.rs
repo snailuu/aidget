@@ -1,8 +1,10 @@
 use std::collections::BTreeMap;
 
-use aidget::runtime::ui::{gathered_frames, relocation_target, DisplayNames};
+use aidget::runtime::ui::{gathered_frames, loadable_frames, relocation_target, DisplayNames};
 use aidget::widgets::model::WidgetFrame;
+use aidget::widgets::store::{Store, WidgetEdit, CONFIG_FILE};
 use tauri::{LogicalPosition, LogicalRect, LogicalSize};
+use tempfile::TempDir;
 
 const NAMES: [&str; 2] = ["Monitor #1", "Monitor #2"];
 const PRIMARY: usize = 0;
@@ -143,6 +145,26 @@ fn gathering_keeps_the_size_of_a_widget_larger_than_the_target() {
     let (frames, _) = gathered_frames(&widgets, EXTERNAL, &displays(), area());
 
     assert_eq!((frames["large"].w, frames["large"].h), (3000.0, 1600.0));
+}
+
+#[test]
+fn a_broken_widget_does_not_stop_the_others_from_gathering() {
+    let dir = TempDir::new().unwrap();
+    let store = Store::new(dir.path());
+    store.ensure_layout().unwrap();
+    store.create("good", "Good", WidgetEdit::default()).unwrap();
+    store
+        .create("broken", "Broken", WidgetEdit::default())
+        .unwrap();
+    std::fs::remove_file(store.widget_dir("broken").unwrap().join(CONFIG_FILE)).unwrap();
+    let board = store.load_board().unwrap();
+
+    let widgets = loadable_frames(&store, &board);
+    let (frames, moved) = gathered_frames(&widgets, EXTERNAL, &displays(), area());
+    let saved = store.move_widgets(board.revision, frames).unwrap();
+
+    assert_eq!(moved, 1);
+    assert_eq!(saved.widgets["good"].display, "Monitor #2");
 }
 
 #[test]

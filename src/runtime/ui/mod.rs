@@ -42,8 +42,8 @@ pub use main_page::{
 };
 pub use main_window::{mark_main_painted, show_main, show_main_now};
 pub use relocation::{
-    gathered_frames, move_widgets_to_default_display, relocation_target, set_widget_display,
-    DisplayNames,
+    gathered_frames, loadable_frames, move_widgets_to_default_display, relocation_target,
+    set_widget_display, DisplayNames,
 };
 pub use state::{
     record_revision, require_main_window_label, retain_widget_revisions, widget_id, UiState,
