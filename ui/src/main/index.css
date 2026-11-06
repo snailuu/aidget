@@ -125,6 +125,11 @@ select:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+/* A separate rule: an engine without :has() drops every selector in its list. */
+.widget-display-button:has(select:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 
 .toast-region {
   position: fixed;
@@ -141,6 +146,7 @@ select:focus-visible {
   align-items: center;
   gap: 10px;
   max-inline-size: min(420px, calc(100vw - 48px));
+  overflow-wrap: anywhere;
   padding: 12px 16px;
   border: 1px solid color-mix(in srgb, var(--text) 14%, transparent);
   border-inline-start: 3px solid var(--success);
@@ -610,10 +616,13 @@ body[data-platform='windows'] .navigation {
   white-space: nowrap;
 }
 .widget-size {
+  overflow: hidden;
   margin: 5px 0 0;
   color: var(--muted);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .widget-actions {
   display: flex;
@@ -697,6 +706,22 @@ body[data-platform='windows'] .navigation {
 
 .widget-icon-button:hover {
   color: var(--text);
+}
+
+.widget-display-button {
+  position: relative;
+}
+.widget-display-button[hidden] {
+  display: none;
+}
+.widget-display-button[data-pinned='true'] {
+  color: var(--accent);
+}
+.widget-display-button select {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
 }
 
 .archive-button:hover {
@@ -1232,6 +1257,15 @@ body[data-platform='windows'] .navigation {
   background: var(--surface);
   font-size: 12px;
 }
+.default-display-control {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+.default-display-control select {
+  max-inline-size: 260px;
+}
 .github-token-control {
   display: grid;
   justify-items: end;
@@ -1655,6 +1689,27 @@ body[data-platform='windows'] .navigation {
 }
 .community-dialog::backdrop {
   background: rgb(0 0 0 / 0.35);
+}
+.confirm-dialog {
+  inline-size: min(420px, calc(100vw - 48px));
+}
+.confirm-dialog-content {
+  display: grid;
+  gap: 6px;
+  padding: 4px 26px 0;
+}
+.confirm-dialog-content p {
+  margin: 0;
+}
+.confirm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 18px 26px 20px;
+}
+.confirm-dialog-accept {
+  color: var(--accent);
+  font-weight: 600;
 }
 .community-dialog-header {
   min-inline-size: 0;

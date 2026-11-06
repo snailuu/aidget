@@ -5,6 +5,7 @@
 
 mod capture;
 mod content;
+mod display_labels;
 mod drag;
 mod geometry;
 mod main_page;
@@ -23,15 +24,18 @@ use crate::widgets::store::Store;
 
 pub use capture::{mark_loaded, mark_ready, screenshot, screenshot_mode, ScreenshotMode};
 pub use content::{content_token, html_paints_own_surface, html_widget_surface, WidgetState};
+pub use display_labels::{
+    display_name, distinct_names, label_at, top_left_y, wide_text, ScreenLabel,
+};
 #[cfg(target_os = "macos")]
 pub use drag::set_dragging_cursor;
 pub use drag::{
-    begin_drag, end_drag, finish_gesture, gesture_owns, persist_position, records_move,
-    start_gesture, wait_for_drag_release,
+    begin_drag, end_drag, finish_gesture, gesture_owns, persist_position, pinned_after_move,
+    records_move, start_gesture, wait_for_drag_release,
 };
 pub use geometry::{
-    best_display_placement, centered_position, display_name, displays, moved_frame,
-    physical_geometry, place_frame, place_in_work_area, place_new_widget,
+    best_display_placement, centered_position, displays, moved_frame, physical_geometry,
+    place_frame, place_in_work_area, place_new_widget, placement_order,
 };
 pub use main_page::{
     cached_preview, delete_widget, deleted_widget_preview, initialize_language,
@@ -40,7 +44,10 @@ pub use main_page::{
     LocalWidgetDetails, MainState, WidgetSummary,
 };
 pub use main_window::{mark_main_painted, show_main, show_main_now};
-pub use relocation::DisplayNames;
+pub use relocation::{
+    gathered_frames, loadable_frames, move_widgets_to_default_display, relocation_target,
+    set_widget_display, DisplayNames,
+};
 pub use state::{
     record_revision, require_main_window_label, retain_widget_revisions, widget_id, DragGesture,
     UiState, MAIN_LABEL,

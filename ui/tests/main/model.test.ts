@@ -22,6 +22,8 @@ const base: WidgetSummary = {
   height: 220,
   enabled: true,
   createdAt: 10,
+  display: 'primary',
+  pinnedDisplay: null,
 };
 
 describe('main window widgets', () => {
@@ -76,6 +78,8 @@ describe('main window widgets', () => {
       lastPage: 'integrations',
       githubToken: null,
       autoDownload: true,
+      defaultDisplay: null,
+      displays: [],
     };
     expect(isEmpty(state)).toBe(true);
     expect(isEmpty({ ...state, widgets: [base] })).toBe(false);
@@ -103,6 +107,8 @@ describe('main window widgets', () => {
       lastPage: 'integrations',
       githubToken: null,
       autoDownload: true,
+      defaultDisplay: null,
+      displays: [],
     };
 
     expect(state.deletedWidgets[0].hasPreview).toBe(true);

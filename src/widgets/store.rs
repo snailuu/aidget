@@ -509,6 +509,7 @@ impl Store {
             )));
         }
 
+        let display = self.load_settings()?.default_display;
         let dir = self.widget_dir(id)?;
 
         let mut meta = WidgetMeta::new(id, title);
@@ -528,18 +529,21 @@ impl Store {
 
         // A recreated id must not inherit state from a previous widget.
         crate::widgets::storage::clear(self, id)?;
-        self.ensure_frame(id, existing.len())?;
+        self.ensure_frame(id, existing.len(), display)?;
         Ok(meta)
     }
 
-    pub fn ensure_frame(&self, id: &str, index: usize) -> Result<()> {
+    fn ensure_frame(&self, id: &str, index: usize, display: Option<String>) -> Result<()> {
         let mut board = self.load_board()?;
         if board.widgets.contains_key(id) {
             return Ok(());
         }
-        board
-            .widgets
-            .insert(id.to_string(), WidgetFrame::default_for(index));
+        let mut frame = WidgetFrame::default_for(index);
+        // CLI writes run without the GUI, so `place_new_widget` never sees them.
+        if let Some(display) = display {
+            frame.display = display;
+        }
+        board.widgets.insert(id.to_string(), frame);
         board.revision += 1;
         self.save_board(&board)
     }
@@ -693,16 +697,30 @@ impl Store {
     }
 
     pub fn move_widget(&self, id: &str, base_revision: u64, frame: WidgetFrame) -> Result<Board> {
+        self.move_widgets(base_revision, BTreeMap::from([(id.to_string(), frame)]))
+    }
+
+    /// Replace several frames as one user action, in a single board revision.
+    pub fn move_widgets(
+        &self,
+        base_revision: u64,
+        frames: BTreeMap<String, WidgetFrame>,
+    ) -> Result<Board> {
         let _lock = self.write_lock()?;
-        validate_id(id)?;
-        self.load_meta(id)?;
+        for id in frames.keys() {
+            validate_id(id)?;
+            self.load_meta(id)?;
+        }
         let mut board = self.load_board()?;
         if board.revision != base_revision {
             return Err(Error::RevisionConflict {
                 current: Box::new(crate::common::error::ConflictCurrent::Board(board)),
             });
         }
-        board.widgets.insert(id.to_string(), frame);
+        if frames.is_empty() {
+            return Ok(board);
+        }
+        board.widgets.extend(frames);
         board.revision += 1;
         self.save_board(&board)?;
         Ok(board)

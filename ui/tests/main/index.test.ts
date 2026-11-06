@@ -7,7 +7,8 @@ import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
 import type { IntegrationInfo } from '../../src/main/integration';
 import { translate } from '../../src/main/locale';
-import type { MainState } from '../../src/main/model';
+import type { MainState, WidgetSummary } from '../../src/main/model';
+import type { DisplayInfo } from '../../src/types/rust';
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -38,11 +39,13 @@ vi.mock('lucide', () => {
     ArrowUpDown: icon,
     ArrowDown: icon,
     ArrowUp: icon,
+    CircleCheck: icon,
     RefreshCw: icon,
     ExternalLink: icon,
     Info: icon,
     LayoutGrid: icon,
     Minus: icon,
+    Monitor: icon,
     RotateCcw: icon,
     ServerCog: icon,
     Settings: icon,
@@ -69,7 +72,13 @@ function state(lastPage: MainState['lastPage']): MainState {
     lastPage,
     githubToken: null,
     autoDownload: true,
+    defaultDisplay: null,
+    displays: [],
   };
+}
+
+function displayInfo(name: string, primary: boolean): DisplayInfo {
+  return { name, label: name, primary, x: 0, y: 0, width: 1920, height: 1080, scale: 1 };
 }
 
 function integrationState(installed: boolean): IntegrationInfo {
@@ -292,6 +301,8 @@ describe('main window navigation', () => {
         height: 220,
         enabled: true,
         createdAt: 1,
+        display: 'primary',
+        pinnedDisplay: null,
       },
     ];
     await loadMain(initial);
@@ -323,6 +334,8 @@ describe('main window navigation', () => {
         height: 220,
         enabled: true,
         createdAt: 1,
+        display: 'primary',
+        pinnedDisplay: null,
       },
     ];
     await loadMain(initial);
@@ -367,6 +380,8 @@ describe('main window navigation', () => {
         height: 220,
         enabled: true,
         createdAt: 1,
+        display: 'primary',
+        pinnedDisplay: null,
       },
     ];
 
@@ -396,6 +411,8 @@ describe('main window navigation', () => {
         height: 330,
         enabled: true,
         createdAt: 1,
+        display: 'primary',
+        pinnedDisplay: null,
       },
     ];
     const rejectPreviews: ((reason?: unknown) => void)[] = [];
@@ -716,6 +733,8 @@ it('opens local details from the card, preview or title without intercepting car
       height: 220,
       enabled: false,
       createdAt: 1,
+      display: 'primary',
+      pinnedDisplay: null,
     },
   ];
   await loadMain(initial);
@@ -871,4 +890,368 @@ it('keeps the pending auto-download value when a stale main event arrives', asyn
       }),
     ),
   );
+});
+
+it('saves the default display chosen in general settings', async () => {
+  const initial = state('general');
+  initial.displays = [displayInfo('Monitor #1', true), displayInfo('Monitor #2', false)];
+  await loadMain(initial);
+  const select = document.querySelector<HTMLSelectElement>('[data-default-display]')!;
+  expect([...select.options].map((option) => option.value)).toEqual([
+    '',
+    'Monitor #1',
+    'Monitor #2',
+  ]);
+
+  select.value = 'Monitor #2';
+  select.dispatchEvent(new Event('change'));
+
+  await vi.waitFor(() =>
+    expect(mocks.invoke).toHaveBeenLastCalledWith('set_preferences', {
+      preferences: expect.objectContaining({ defaultDisplay: 'Monitor #2' }),
+    }),
+  );
+});
+
+it('saves null when automatic placement is chosen again', async () => {
+  const initial = state('general');
+  initial.displays = [displayInfo('Monitor #1', true), displayInfo('Monitor #2', false)];
+  initial.defaultDisplay = 'Monitor #2';
+  await loadMain(initial);
+  const select = document.querySelector<HTMLSelectElement>('[data-default-display]')!;
+  expect(select.value).toBe('Monitor #2');
+
+  select.value = '';
+  select.dispatchEvent(new Event('change'));
+
+  await vi.waitFor(() =>
+    expect(mocks.invoke).toHaveBeenLastCalledWith('set_preferences', {
+      preferences: expect.objectContaining({ defaultDisplay: null }),
+    }),
+  );
+});
+
+it('restores the saved default display when saving fails', async () => {
+  const initial = state('general');
+  initial.displays = [displayInfo('Monitor #1', true), displayInfo('Monitor #2', false)];
+  await loadMain(initial);
+  mocks.invoke.mockImplementation((command: string) =>
+    command === 'set_preferences'
+      ? Promise.reject(new Error('disk full'))
+      : Promise.resolve({ state: 'idle' }),
+  );
+  const select = document.querySelector<HTMLSelectElement>('[data-default-display]')!;
+
+  select.value = 'Monitor #2';
+  select.dispatchEvent(new Event('change'));
+
+  const fault = document.querySelector<HTMLElement>('[data-fault]')!;
+  await vi.waitFor(() => expect(fault.textContent).toContain('disk full'));
+  expect(select.value).toBe('');
+});
+
+it('refreshes the display options when a main event reports a new display', async () => {
+  const initial = state('general');
+  initial.displays = [displayInfo('Monitor #1', true)];
+  await loadMain(initial);
+  const select = document.querySelector<HTMLSelectElement>('[data-default-display]')!;
+  expect(select.options).toHaveLength(2);
+
+  const render = mocks.listen.mock.calls.find(([event]) => event === 'aidget://main')![1];
+  render({
+    event: 'aidget://main',
+    id: 1,
+    payload: { ...initial, displays: [...initial.displays, displayInfo('Monitor #2', false)] },
+  });
+
+  expect(select.options).toHaveLength(3);
+});
+
+function cardWidget(overrides: Partial<WidgetSummary> = {}): WidgetSummary {
+  return {
+    id: 'note',
+    title: 'Note',
+    packageName: null,
+    revision: 1,
+    token: 'token',
+    width: 360,
+    height: 220,
+    enabled: true,
+    createdAt: 1,
+    display: 'primary',
+    pinnedDisplay: null,
+    ...overrides,
+  };
+}
+
+function twoDisplays() {
+  return [displayInfo('Monitor #1', true), displayInfo('Monitor #2', false)];
+}
+
+function stubDialogs() {
+  vi.spyOn(HTMLDialogElement.prototype, 'showModal').mockImplementation(function (
+    this: HTMLDialogElement,
+  ) {
+    this.open = true;
+  });
+  vi.spyOn(HTMLDialogElement.prototype, 'close').mockImplementation(function (
+    this: HTMLDialogElement,
+  ) {
+    this.open = false;
+    this.dispatchEvent(new Event('close'));
+  });
+}
+
+async function openMoveDialog() {
+  document.querySelector<HTMLButtonElement>('[data-move-all-widgets]')!.click();
+  await vi.waitFor(() => expect(document.querySelector('.confirm-dialog')).not.toBeNull());
+  return document.querySelector<HTMLDialogElement>('.confirm-dialog')!;
+}
+
+it('chooses a display from the widget card', async () => {
+  const initial = state('local-widgets');
+  initial.displays = twoDisplays();
+  initial.widgets = [cardWidget()];
+  await loadMain(initial);
+  const select = document.querySelector<HTMLSelectElement>('.widget-display-button select')!;
+
+  select.value = 'Monitor #2';
+  select.dispatchEvent(new Event('change'));
+
+  await vi.waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith('set_widget_display', {
+      id: 'note',
+      display: 'Monitor #2',
+    }),
+  );
+});
+
+it('returns a widget to the default display from its card', async () => {
+  const initial = state('local-widgets');
+  initial.displays = twoDisplays();
+  initial.widgets = [cardWidget({ pinnedDisplay: 'Monitor #2', display: 'Monitor #2' })];
+  await loadMain(initial);
+  const select = document.querySelector<HTMLSelectElement>('.widget-display-button select')!;
+  expect(select.value).toBe('Monitor #2');
+
+  select.value = '';
+  select.dispatchEvent(new Event('change'));
+
+  await vi.waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith('set_widget_display', { id: 'note', display: null }),
+  );
+});
+
+it('restores the card when choosing a display fails', async () => {
+  const initial = state('local-widgets');
+  initial.displays = twoDisplays();
+  initial.widgets = [cardWidget()];
+  await loadMain(initial);
+  mocks.invoke.mockImplementation((command: string) =>
+    command === 'set_widget_display'
+      ? Promise.reject(new Error('board conflict'))
+      : Promise.resolve({ state: 'idle' }),
+  );
+  const select = document.querySelector<HTMLSelectElement>('.widget-display-button select')!;
+
+  select.value = 'Monitor #2';
+  select.dispatchEvent(new Event('change'));
+
+  const fault = document.querySelector<HTMLElement>('[data-fault]')!;
+  await vi.waitFor(() => expect(fault.textContent).toContain('board conflict'));
+  expect(select.value).toBe('');
+});
+
+it('clears the earlier error when choosing a display is retried', async () => {
+  const initial = state('local-widgets');
+  initial.displays = twoDisplays();
+  initial.widgets = [cardWidget()];
+  await loadMain(initial);
+  mocks.invoke.mockImplementation((command: string) =>
+    command === 'set_widget_display'
+      ? Promise.reject(new Error('board conflict'))
+      : Promise.resolve({ state: 'idle' }),
+  );
+  const select = document.querySelector<HTMLSelectElement>('.widget-display-button select')!;
+  const fault = document.querySelector<HTMLElement>('[data-fault]')!;
+  select.value = 'Monitor #2';
+  select.dispatchEvent(new Event('change'));
+  await vi.waitFor(() => expect(fault.hidden).toBe(false));
+
+  mocks.invoke.mockImplementation(() => Promise.resolve({ state: 'idle' }));
+  select.value = 'Monitor #2';
+  select.dispatchEvent(new Event('change'));
+
+  await vi.waitFor(() => expect(fault.hidden).toBe(true));
+});
+
+it('names the display a widget is on once there is more than one', async () => {
+  const initial = state('local-widgets');
+  initial.displays = twoDisplays();
+  initial.widgets = [cardWidget({ display: 'Monitor #2' })];
+  await loadMain(initial);
+
+  const size = document.querySelector<HTMLElement>('.widget-size')!;
+  expect(size.textContent).toBe('360 × 220 · Monitor #2');
+  // The line truncates long display names, so hovering must still show all of it.
+  expect(size.title).toBe('360 × 220 · Monitor #2');
+});
+
+it('keeps the size alone on a single display', async () => {
+  const initial = state('local-widgets');
+  initial.displays = [displayInfo('Monitor #1', true)];
+  initial.widgets = [cardWidget()];
+  await loadMain(initial);
+
+  expect(document.querySelector('.widget-size')?.textContent).toBe('360 × 220');
+});
+
+it('shows a display name with replacement patterns as written', async () => {
+  stubDialogs();
+  const name = "Dell $& $' $$";
+  const initial = state('general');
+  initial.displays = [
+    displayInfo('Monitor #1', true),
+    { ...displayInfo('Monitor #2', false), label: name },
+  ];
+  initial.defaultDisplay = 'Monitor #2';
+  initial.widgets = [cardWidget()];
+  await loadMain(initial);
+  mocks.invoke.mockImplementation((command: string) =>
+    command === 'move_widgets_to_default_display'
+      ? Promise.resolve(1)
+      : Promise.resolve({ state: 'idle' }),
+  );
+  const follow = document.querySelector<HTMLSelectElement>('.widget-display-button select')!;
+  expect(follow.options[0].textContent).toContain(name);
+
+  const dialog = await openMoveDialog();
+  expect(dialog.textContent).toContain(name);
+  dialog.querySelector<HTMLButtonElement>('.confirm-dialog-accept')!.click();
+
+  await vi.waitFor(() => expect(document.querySelector('.toast')?.textContent).toContain(name));
+});
+
+it('asks before moving every widget and leaves them alone when declined', async () => {
+  stubDialogs();
+  const initial = state('general');
+  initial.displays = twoDisplays();
+  initial.defaultDisplay = 'Monitor #2';
+  initial.widgets = [
+    cardWidget({ id: 'a' }),
+    cardWidget({ id: 'b', pinnedDisplay: 'Monitor #1' }),
+    cardWidget({ id: 'c', display: 'Monitor #2' }),
+  ];
+  await loadMain(initial);
+
+  const dialog = await openMoveDialog();
+
+  expect(dialog.textContent).toContain(
+    translate('en-US', 'moveAllMessage').replace('{count}', '2').replace('{display}', 'Monitor #2'),
+  );
+  expect(dialog.textContent).toContain(
+    translate('en-US', 'moveAllPinnedMessage').replace('{count}', '1'),
+  );
+  dialog.querySelector<HTMLButtonElement>('.confirm-dialog-cancel')!.click();
+  await vi.waitFor(() => expect(document.querySelector('.confirm-dialog')).toBeNull());
+  expect(mocks.invoke).not.toHaveBeenCalledWith('move_widgets_to_default_display');
+});
+
+it('moves every widget after confirming and reports how many moved', async () => {
+  stubDialogs();
+  const initial = state('general');
+  initial.displays = twoDisplays();
+  initial.defaultDisplay = 'Monitor #2';
+  initial.widgets = [cardWidget()];
+  await loadMain(initial);
+  mocks.invoke.mockImplementation((command: string) =>
+    command === 'move_widgets_to_default_display'
+      ? Promise.resolve(1)
+      : Promise.resolve({ state: 'idle' }),
+  );
+
+  const dialog = await openMoveDialog();
+  dialog.querySelector<HTMLButtonElement>('.confirm-dialog-accept')!.click();
+
+  await vi.waitFor(() =>
+    expect(document.querySelector('.toast')?.textContent).toContain(
+      translate('en-US', 'moveAllDone').replace('{count}', '1').replace('{display}', 'Monitor #2'),
+    ),
+  );
+});
+
+it('says the widgets follow the default when clearing choices moved nothing', async () => {
+  stubDialogs();
+  const initial = state('general');
+  initial.displays = twoDisplays();
+  initial.defaultDisplay = 'Monitor #2';
+  initial.widgets = [cardWidget({ display: 'Monitor #2', pinnedDisplay: 'Monitor #2' })];
+  await loadMain(initial);
+  mocks.invoke.mockImplementation((command: string) =>
+    command === 'move_widgets_to_default_display'
+      ? Promise.resolve(0)
+      : Promise.resolve({ state: 'idle' }),
+  );
+
+  const dialog = await openMoveDialog();
+  dialog.querySelector<HTMLButtonElement>('.confirm-dialog-accept')!.click();
+
+  await vi.waitFor(() =>
+    expect(document.querySelector('.toast')?.textContent).toContain(
+      translate('en-US', 'moveAllFollowing'),
+    ),
+  );
+});
+
+it('clears the earlier error when moving all widgets is retried', async () => {
+  const initial = state('general');
+  initial.displays = twoDisplays();
+  initial.defaultDisplay = 'Monitor #2';
+  initial.widgets = [cardWidget()];
+  await loadMain(initial);
+  mocks.invoke.mockImplementation((command: string) =>
+    command === 'move_widgets_to_default_display'
+      ? Promise.reject(new Error('board conflict'))
+      : Promise.resolve({ state: 'idle' }),
+  );
+  const fault = document.querySelector<HTMLElement>('[data-fault]')!;
+  (await openMoveDialog()).querySelector<HTMLButtonElement>('.confirm-dialog-accept')!.click();
+  await vi.waitFor(() => expect(fault.hidden).toBe(false));
+
+  mocks.invoke.mockImplementation((command: string) =>
+    command === 'move_widgets_to_default_display'
+      ? Promise.resolve(1)
+      : Promise.resolve({ state: 'idle' }),
+  );
+  (await openMoveDialog()).querySelector<HTMLButtonElement>('.confirm-dialog-accept')!.click();
+
+  await vi.waitFor(() => expect(fault.hidden).toBe(true));
+});
+
+it('has nothing to move without a connected default display', async () => {
+  const initial = state('general');
+  initial.displays = twoDisplays();
+  initial.widgets = [cardWidget()];
+  await loadMain(initial);
+  const button = document.querySelector<HTMLButtonElement>('[data-move-all-widgets]')!;
+  expect(button.disabled).toBe(true);
+
+  const render = mocks.listen.mock.calls.find(([event]) => event === 'aidget://main')![1];
+  render({
+    event: 'aidget://main',
+    id: 1,
+    payload: { ...initial, defaultDisplay: 'Monitor #9' },
+  });
+
+  expect(button.disabled).toBe(true);
+});
+
+it('has nothing to move when every widget already follows the default display', async () => {
+  const initial = state('general');
+  initial.displays = twoDisplays();
+  initial.defaultDisplay = 'Monitor #2';
+  initial.widgets = [cardWidget({ display: 'Monitor #2' })];
+  await loadMain(initial);
+
+  expect(document.querySelector<HTMLButtonElement>('[data-move-all-widgets]')!.disabled).toBe(true);
 });

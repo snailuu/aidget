@@ -137,6 +137,10 @@ pub struct WidgetFrame {
     pub y: f64,
     pub w: f64,
     pub h: f64,
+    /// Display the user chose for this widget. It outranks the default display
+    /// and survives the system moving the window off a sleeping display.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned_display: Option<String>,
 }
 
 impl WidgetFrame {
@@ -149,6 +153,7 @@ impl WidgetFrame {
             y: 96.0 + row as f64 * 248.0,
             w: 360.0,
             h: 220.0,
+            pinned_display: None,
         }
     }
 
@@ -174,6 +179,7 @@ impl WidgetFrame {
             y: self.y,
             w,
             h,
+            pinned_display: self.pinned_display.clone(),
         }
     }
 }
@@ -306,10 +312,13 @@ pub struct WidgetDocument {
     pub frame: Option<WidgetFrame>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct DisplayInfo {
+    /// Stable identifier stored in frames and settings.
     pub name: String,
+    /// Name the system shows for this display; equals `name` when it has none.
+    pub label: String,
     pub primary: bool,
     pub x: f64,
     pub y: f64,
