@@ -1,6 +1,6 @@
 //! Moving existing widgets between displays: the choice on a widget card,
 //! reopening on the chosen or default display, and gathering every widget.
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 
 use tauri::{AppHandle, LogicalPosition, LogicalRect, LogicalSize, Manager, Monitor};
 
@@ -9,7 +9,9 @@ use crate::settings;
 use crate::widgets::model::{validate_id, Board, WidgetFrame};
 use crate::widgets::store::Store;
 
-use super::geometry::{connected_displays, logical_work_area, place_in_work_area};
+use super::geometry::{
+    connected_displays, enabled_ids, logical_work_area, occupied_on, place_in_work_area,
+};
 use super::state::UiState;
 use super::widget_windows::apply_board;
 
@@ -127,33 +129,6 @@ pub fn loadable_frames(store: &Store, board: &Board) -> BTreeMap<String, WidgetF
         .collect()
 }
 
-/// Rectangles of the enabled widgets on `target`, other than `id`.
-fn occupied_on(
-    store: &Store,
-    board: &Board,
-    id: &str,
-    target: usize,
-    displays: &DisplayNames<'_>,
-) -> Result<Vec<LogicalRect<f64, f64>>> {
-    let enabled: HashSet<_> = store
-        .list()?
-        .widgets
-        .into_iter()
-        .filter(|widget| widget.enabled)
-        .map(|widget| widget.id)
-        .collect();
-    Ok(board
-        .widgets
-        .iter()
-        .filter(|(existing, frame)| {
-            existing.as_str() != id
-                && enabled.contains(*existing)
-                && displays.index(&frame.display) == Some(target)
-        })
-        .map(|(_, frame)| frame_rect(frame))
-        .collect())
-}
-
 /// `frame` moved to the display it belongs on, when that is another display.
 fn relocated(
     app: &AppHandle,
@@ -173,7 +148,7 @@ fn relocated(
         target,
         &displays,
         logical_work_area(&monitors[target].1),
-        &occupied_on(store, board, id, target, &displays)?,
+        &occupied_on(board, &enabled_ids(store)?, id, &monitors, primary, target),
     )))
 }
 

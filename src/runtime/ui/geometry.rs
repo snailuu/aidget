@@ -1,4 +1,6 @@
 //! Display discovery and widget frame geometry.
+use std::collections::HashSet;
+
 use tauri::{
     AppHandle, LogicalPosition, LogicalRect, LogicalSize, PhysicalPosition, PhysicalRect,
     PhysicalSize,
@@ -6,10 +8,11 @@ use tauri::{
 
 use crate::common::error::Result;
 use crate::settings;
-use crate::widgets::model::{DisplayInfo, WidgetFrame};
+use crate::widgets::model::{Board, DisplayInfo, WidgetFrame};
 use crate::widgets::store::Store;
 
 use super::display_labels::{display_name, display_names, label_at, screen_labels};
+use super::relocation::DisplayNames;
 
 const PLACEMENT_MARGIN: f64 = 24.0;
 const PLACEMENT_GAP: f64 = 16.0;
@@ -35,26 +38,13 @@ pub fn centered_position(
 /// area, including into negative coordinates. That is a valid cross-display
 /// position, so only a frame whose display disappeared is moved back.
 pub fn physical_geometry(app: &AppHandle, frame: &WidgetFrame) -> (i32, i32, f64) {
-    let monitors = app.available_monitors().unwrap_or_default();
-    let primary = app.primary_monitor().ok().flatten();
-    let (selected, found) = if frame.display == "primary" {
-        (
-            primary.clone().or_else(|| monitors.first().cloned()),
-            primary.is_some() || !monitors.is_empty(),
-        )
-    } else {
-        match display_names(&monitors)
-            .iter()
-            .position(|name| *name == frame.display)
-        {
-            Some(index) => (Some(monitors[index].clone()), true),
-            None => (primary.clone().or_else(|| monitors.first().cloned()), false),
-        }
-    };
-
-    let Some(monitor) = selected else {
+    let Ok((displays, primary)) = connected_displays(app) else {
         return (frame.x.round() as i32, frame.y.round() as i32, 1.0);
     };
+    let names = DisplayNames::of(&displays, primary);
+    let found = names.index(&frame.display);
+    let index = found.or(names.index("primary")).unwrap_or(0);
+    let monitor = &displays[index].1;
     let area = monitor.work_area();
     let scale = monitor.scale_factor();
     let (x, y) = place_frame(
@@ -62,7 +52,7 @@ pub fn physical_geometry(app: &AppHandle, frame: &WidgetFrame) -> (i32, i32, f64
         (area.position.x, area.position.y),
         (area.size.width, area.size.height),
         scale,
-        found,
+        found.is_some(),
     );
     (x, y, scale)
 }
@@ -258,13 +248,7 @@ pub fn place_new_widget(app: &AppHandle, store: &Store, id: &str) -> Result<()> 
     let meta = store.load_meta(id)?;
     let board = store.load_board()?;
     let initial = board.widgets.get(id).cloned();
-    let enabled: std::collections::HashSet<_> = store
-        .list()?
-        .widgets
-        .into_iter()
-        .filter(|widget| widget.enabled)
-        .map(|widget| widget.id)
-        .collect();
+    let enabled = enabled_ids(store)?;
     let (displays, primary_index) = connected_displays(app)?;
     let candidates: Vec<_> = displays
         .iter()
@@ -275,15 +259,15 @@ pub fn place_new_widget(app: &AppHandle, store: &Store, id: &str) -> Result<()> 
     let mut areas = Vec::with_capacity(order.len());
     let mut occupied_by_display = Vec::with_capacity(order.len());
     for &index in &order {
-        let area = logical_work_area(&displays[index].1);
-        let occupied: Vec<_> = board
-            .widgets
-            .iter()
-            .filter(|(existing, _)| existing.as_str() != id && enabled.contains(*existing))
-            .filter_map(|(_, frame)| frame_rect_on_display(frame, &displays, primary_index, index))
-            .collect();
-        areas.push(area);
-        occupied_by_display.push(occupied);
+        areas.push(logical_work_area(&displays[index].1));
+        occupied_by_display.push(occupied_on(
+            &board,
+            &enabled,
+            id,
+            &displays,
+            primary_index,
+            index,
+        ));
     }
 
     let (position, placed) = best_display_placement(
@@ -371,22 +355,45 @@ fn logical_area(monitor: &tauri::Monitor) -> f64 {
     size.width * size.height
 }
 
+/// Ids of the widgets that have a window to avoid.
+pub(super) fn enabled_ids(store: &Store) -> Result<HashSet<String>> {
+    Ok(store
+        .list()?
+        .widgets
+        .into_iter()
+        .filter(|widget| widget.enabled)
+        .map(|widget| widget.id)
+        .collect())
+}
+
+/// Where the enabled widgets other than `id` really sit, in `target`'s coordinates.
+/// That covers windows straddling from another display and stand-ins for a display
+/// that is gone, which their stored display name would miss.
+pub(super) fn occupied_on(
+    board: &Board,
+    enabled: &HashSet<String>,
+    id: &str,
+    displays: &[(String, tauri::Monitor)],
+    primary: Option<usize>,
+    target: usize,
+) -> Vec<LogicalRect<f64, f64>> {
+    board
+        .widgets
+        .iter()
+        .filter(|(existing, _)| existing.as_str() != id && enabled.contains(*existing))
+        .filter_map(|(_, frame)| frame_rect_on_display(frame, displays, primary, target))
+        .collect()
+}
+
 fn frame_rect_on_display(
     frame: &WidgetFrame,
     displays: &[(String, tauri::Monitor)],
     primary_index: Option<usize>,
     target_index: usize,
 ) -> Option<LogicalRect<f64, f64>> {
-    let (source_index, display_found) = if frame.display == "primary" {
-        let fallback = primary_index.or((!displays.is_empty()).then_some(0));
-        (fallback, fallback.is_some())
-    } else {
-        match displays.iter().position(|(name, _)| name == &frame.display) {
-            Some(index) => (Some(index), true),
-            None => (primary_index.or((!displays.is_empty()).then_some(0)), false),
-        }
-    };
-    let source = &displays[source_index?].1;
+    let names = DisplayNames::of(displays, primary_index);
+    let found = names.index(&frame.display);
+    let source = &displays[found.or(names.index("primary"))?].1;
     let source_area = source.work_area();
     let source_scale = source.scale_factor();
     let area = (
@@ -395,7 +402,7 @@ fn frame_rect_on_display(
         source_area.size.width as f64 / source_scale,
         source_area.size.height as f64 / source_scale,
     );
-    let fitted = if display_found {
+    let fitted = if found.is_some() {
         frame.fitted(area)
     } else {
         frame.clamped(area)
