@@ -165,7 +165,7 @@ impl TrayClickAction {
 }
 
 /// Preferences edited by the main window and persisted in `settings.toml`.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UiPreferences {
     /// Main-window color theme.
@@ -179,6 +179,9 @@ pub struct UiPreferences {
     /// Whether a newer release is downloaded before the user asks.
     #[serde(default = "auto_download_default")]
     pub auto_download: bool,
+    /// Display new widgets try first; `None` keeps automatic placement.
+    #[serde(default)]
+    pub default_display: Option<String>,
 }
 
 impl Default for UiPreferences {
@@ -189,6 +192,7 @@ impl Default for UiPreferences {
             tray_click_action: TrayClickAction::default(),
             last_page: MainPage::default(),
             auto_download: auto_download_default(),
+            default_display: None,
         }
     }
 }
@@ -219,6 +223,9 @@ pub struct Settings {
     /// Whether a newer release is downloaded before the user asks.
     #[serde(default = "auto_download_default")]
     pub auto_download: bool,
+    /// Display new widgets try first; `None` keeps automatic placement.
+    #[serde(default)]
+    pub default_display: Option<String>,
 }
 
 /// Download updates automatically unless disabled on the About page.
@@ -239,6 +246,7 @@ impl Default for Settings {
             last_page: MainPage::default(),
             github_token: None,
             auto_download: auto_download_default(),
+            default_display: None,
         }
     }
 }
@@ -252,6 +260,7 @@ impl Settings {
             tray_click_action: self.tray_click_action,
             last_page: self.last_page,
             auto_download: self.auto_download,
+            default_display: self.default_display.clone(),
         }
     }
 }
@@ -308,6 +317,12 @@ pub fn save_preferences(root: &Path, preferences: UiPreferences) -> Result<()> {
     document["tray_click_action"] = value(preferences.tray_click_action.as_str());
     document["last_page"] = value(preferences.last_page.as_str());
     document["auto_download"] = value(preferences.auto_download);
+    match preferences.default_display {
+        Some(display) => document["default_display"] = value(display),
+        None => {
+            document.remove("default_display");
+        }
+    }
     atomic_write_private(&path, document.to_string().as_bytes())
 }
 

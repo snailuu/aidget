@@ -23,6 +23,7 @@ import {
 
 import { renderAgentStrip } from './agent-controls';
 import { createCommunityPage } from './community';
+import { renderDisplaySelect, selectedDisplay } from './display-select';
 import {
   mcpCommandLine,
   type AgentProblem,
@@ -83,7 +84,7 @@ interface DeletedWidgetView {
 
 type PreferencesSnapshot = Pick<
   MainState,
-  'theme' | 'language' | 'trayClickAction' | 'lastPage' | 'autoDownload'
+  'theme' | 'language' | 'trayClickAction' | 'lastPage' | 'autoDownload' | 'defaultDisplay'
 >;
 
 const GITHUB_REPOSITORY_URL = 'https://github.com/aidget-ai/aidget';
@@ -108,6 +109,7 @@ const version = document.querySelector<HTMLElement>('[data-version]')!;
 const githubButton = document.querySelector<HTMLButtonElement>('[data-github]')!;
 const autoStart = document.querySelector<HTMLButtonElement>('[data-autostart]')!;
 const language = document.querySelector<HTMLSelectElement>('[data-language]')!;
+const defaultDisplaySelect = document.querySelector<HTMLSelectElement>('[data-default-display]')!;
 const githubTokenControl = document.querySelector<HTMLElement>('[data-github-token-control]')!;
 const githubTokenLink = document.querySelector<HTMLButtonElement>('[data-github-token-link]')!;
 const githubTokenForm = document.querySelector<HTMLFormElement>('[data-github-token-form]')!;
@@ -131,6 +133,7 @@ const aboutPage = document.querySelector<HTMLElement>('[data-view="about"]')!;
 const updateHeaderAction = document.querySelector<HTMLButtonElement>('[data-update-header]')!;
 
 let autoDownload = false;
+let defaultDisplay: string | null = null;
 
 const updatePage = createUpdatePage(
   aboutPage,
@@ -463,6 +466,12 @@ function renderPreferences() {
   trayClickControlRoot.querySelectorAll<HTMLButtonElement>('[data-value]').forEach((button) => {
     button.disabled = platform === 'linux' || preferencesBusy;
   });
+  renderDisplaySelect(defaultDisplaySelect, state?.displays ?? [], defaultDisplay, {
+    automatic: t('displayAutomatic'),
+    primary: t('displayPrimary'),
+    disconnected: t('displayDisconnected'),
+  });
+  defaultDisplaySelect.disabled = preferencesBusy;
 }
 
 function renderGithubToken() {
@@ -484,7 +493,14 @@ function renderGithubToken() {
 }
 
 function currentPreferences(): PreferencesSnapshot {
-  return { theme, language: locale, trayClickAction, lastPage: page, autoDownload };
+  return {
+    theme,
+    language: locale,
+    trayClickAction,
+    lastPage: page,
+    autoDownload,
+    defaultDisplay,
+  };
 }
 
 function applyPreferences(next: PreferencesSnapshot) {
@@ -493,6 +509,7 @@ function applyPreferences(next: PreferencesSnapshot) {
   locale = next.language;
   trayClickAction = next.trayClickAction;
   autoDownload = next.autoDownload;
+  defaultDisplay = next.defaultDisplay;
   updatePage.setAutoDownload(autoDownload);
   applyTheme(theme);
   if (state) {
@@ -502,6 +519,7 @@ function applyPreferences(next: PreferencesSnapshot) {
       language: next.language,
       trayClickAction: next.trayClickAction,
       autoDownload: next.autoDownload,
+      defaultDisplay: next.defaultDisplay,
     };
   }
   renderPreferences();
@@ -571,6 +589,16 @@ async function setLanguage(next: Locale) {
   }
   const previous = currentPreferences();
   applyPreferences({ ...previous, language: next });
+  await persistPreferences(previous);
+}
+
+async function setDefaultDisplay(next: string | null) {
+  if (preferencesBusy || next === defaultDisplay) {
+    renderPreferences();
+    return;
+  }
+  const previous = currentPreferences();
+  applyPreferences({ ...previous, defaultDisplay: next });
   await persistPreferences(previous);
 }
 
@@ -966,6 +994,7 @@ function render(next: MainState) {
     theme = next.theme;
     locale = next.language;
     trayClickAction = next.trayClickAction;
+    defaultDisplay = next.defaultDisplay;
     applyTheme(theme);
     if (languageChanged) {
       applyLocaleStatic();
@@ -1221,6 +1250,9 @@ document.addEventListener('visibilitychange', () => syncPreviewRefresh(true));
 
 language.addEventListener('change', () => {
   void setLanguage(language.value as Locale);
+});
+defaultDisplaySelect.addEventListener('change', () => {
+  void setDefaultDisplay(selectedDisplay(defaultDisplaySelect));
 });
 githubTokenLink.addEventListener('click', () => {
   fault.hidden = true;

@@ -1,3 +1,4 @@
+import type { DisplayInfo } from '../types/rust';
 import type { Locale } from './locale';
 import type { Theme } from './preferences';
 
@@ -34,6 +35,8 @@ export interface MainState {
   lastPage: MainPage;
   githubToken: GithubTokenSummary | null;
   autoDownload: boolean;
+  defaultDisplay: string | null;
+  displays: DisplayInfo[];
 }
 
 export interface GithubTokenSummary {
