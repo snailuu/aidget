@@ -215,9 +215,6 @@ pub fn set_widget_enabled(
     validate_id(id)?;
     let state = app.state::<UiState>();
     let store = Store::new(state.root.lock().unwrap().clone());
-    if enabled {
-        relocate_on_open(app, &store, id)?;
-    }
     store.update(
         id,
         base_revision,
@@ -226,6 +223,9 @@ pub fn set_widget_enabled(
             ..WidgetEdit::default()
         },
     )?;
+    if enabled {
+        relocate_on_open(app, &store, id)?;
+    }
     sync_widgets(app);
     Ok(())
 }
