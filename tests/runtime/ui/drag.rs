@@ -49,6 +49,21 @@ fn dragging_within_a_display_saved_under_its_own_name_keeps_following_the_defaul
 }
 
 #[test]
+fn dragging_within_the_chosen_display_keeps_the_choice_under_its_own_name() {
+    // `primary` would follow the system setting instead of the chosen monitor.
+    assert_eq!(
+        pinned_after_move(
+            &frame("primary", Some("Monitor #1")),
+            "primary",
+            &both(),
+            true
+        )
+        .as_deref(),
+        Some("Monitor #1")
+    );
+}
+
+#[test]
 fn dragging_replaces_a_choice_the_widget_has_left() {
     // The system moved the window away, and the user then settled it here.
     assert_eq!(

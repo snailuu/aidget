@@ -15,15 +15,20 @@ use super::relocation::DisplayNames;
 use super::state::{DragGesture, UiState};
 
 /// The widget's chosen display after a move to `display`. Dragging it to another
-/// display is a choice; so is settling on a display other than the chosen one.
+/// display is a choice; so is settling on a display other than the chosen one. A
+/// drag within the chosen display keeps its name: `primary` would follow the system
+/// setting instead of that monitor.
 pub fn pinned_after_move(
     current: &WidgetFrame,
     display: &str,
     connected: &DisplayNames<'_>,
     user_drag: bool,
 ) -> Option<String> {
-    let changed = connected.index(display) != connected.index(&current.display);
-    if user_drag && (changed || current.pinned_display.is_some()) {
+    let target = connected.index(display);
+    let changed = target != connected.index(&current.display);
+    let chosen = current.pinned_display.as_deref();
+    let on_choice = chosen.is_some_and(|name| connected.index(name) == target);
+    if user_drag && !on_choice && (changed || chosen.is_some()) {
         Some(display.to_string())
     } else {
         current.pinned_display.clone()

@@ -1106,6 +1106,32 @@ it('keeps the size alone on a single display', async () => {
   expect(document.querySelector('.widget-size')?.textContent).toBe('360 × 220');
 });
 
+it('shows a display name with replacement patterns as written', async () => {
+  stubDialogs();
+  const name = "Dell $& $' $$";
+  const initial = state('general');
+  initial.displays = [
+    displayInfo('Monitor #1', true),
+    { ...displayInfo('Monitor #2', false), label: name },
+  ];
+  initial.defaultDisplay = 'Monitor #2';
+  initial.widgets = [cardWidget()];
+  await loadMain(initial);
+  mocks.invoke.mockImplementation((command: string) =>
+    command === 'move_widgets_to_default_display'
+      ? Promise.resolve(1)
+      : Promise.resolve({ state: 'idle' }),
+  );
+  const follow = document.querySelector<HTMLSelectElement>('.widget-display-button select')!;
+  expect(follow.options[0].textContent).toContain(name);
+
+  const dialog = await openMoveDialog();
+  expect(dialog.textContent).toContain(name);
+  dialog.querySelector<HTMLButtonElement>('.confirm-dialog-accept')!.click();
+
+  await vi.waitFor(() => expect(document.querySelector('.toast')?.textContent).toContain(name));
+});
+
 it('asks before moving every widget and leaves them alone when declined', async () => {
   stubDialogs();
   const initial = state('general');

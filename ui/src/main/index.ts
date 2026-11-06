@@ -493,7 +493,8 @@ function renderPreferences() {
     preferencesBusy || movingWidgets || (summary.moving === 0 && summary.pinned === 0);
   const defaultTarget = defaultDisplay === null ? undefined : findDisplay(displays, defaultDisplay);
   const followDefault = defaultTarget
-    ? t('followDefaultDisplay').replace('{display}', defaultTarget.label)
+    ? // A replacer function keeps `$` patterns in a system name literal.
+      t('followDefaultDisplay').replace('{display}', () => defaultTarget.label)
     : t('followDefault');
   for (const view of views.values()) {
     const { widget } = view;
@@ -534,7 +535,9 @@ async function moveAllWidgets() {
   const message = [];
   if (moving > 0) {
     message.push(
-      t('moveAllMessage').replace('{count}', String(moving)).replace('{display}', target.label),
+      t('moveAllMessage')
+        .replace('{count}', String(moving))
+        .replace('{display}', () => target.label),
     );
   }
   if (pinned > 0) {
@@ -557,7 +560,9 @@ async function moveAllWidgets() {
     toast.show(
       moved === 0
         ? t('moveAllFollowing')
-        : t('moveAllDone').replace('{count}', String(moved)).replace('{display}', target.label),
+        : t('moveAllDone')
+            .replace('{count}', String(moved))
+            .replace('{display}', () => target.label),
     );
   } catch (error) {
     showFault(`${t('moveAllFailed')}: ${String(error)}`);
