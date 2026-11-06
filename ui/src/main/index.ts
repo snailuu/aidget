@@ -543,6 +543,7 @@ async function moveAllWidgets() {
     return;
   }
   movingWidgets = true;
+  fault.hidden = true;
   renderPreferences();
   try {
     const moved = await invoke<number>('move_widgets_to_default_display');
@@ -560,6 +561,7 @@ async function moveAllWidgets() {
 }
 
 async function changeWidgetDisplay(view: WidgetView, display: string | null) {
+  fault.hidden = true;
   try {
     await invoke<void>('set_widget_display', { id: view.widget.id, display });
   } catch (error) {

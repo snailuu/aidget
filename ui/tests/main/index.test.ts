@@ -944,6 +944,29 @@ it('restores the card when choosing a display fails', async () => {
   expect(select.value).toBe('');
 });
 
+it('clears the earlier error when choosing a display is retried', async () => {
+  const initial = state('local-widgets');
+  initial.displays = twoDisplays();
+  initial.widgets = [cardWidget()];
+  await loadMain(initial);
+  mocks.invoke.mockImplementation((command: string) =>
+    command === 'set_widget_display'
+      ? Promise.reject(new Error('board conflict'))
+      : Promise.resolve({ state: 'idle' }),
+  );
+  const select = document.querySelector<HTMLSelectElement>('.widget-display-button select')!;
+  const fault = document.querySelector<HTMLElement>('[data-fault]')!;
+  select.value = 'Monitor #2';
+  select.dispatchEvent(new Event('change'));
+  await vi.waitFor(() => expect(fault.hidden).toBe(false));
+
+  mocks.invoke.mockImplementation(() => Promise.resolve({ state: 'idle' }));
+  select.value = 'Monitor #2';
+  select.dispatchEvent(new Event('change'));
+
+  await vi.waitFor(() => expect(fault.hidden).toBe(true));
+});
+
 it('names the display a widget is on once there is more than one', async () => {
   const initial = state('local-widgets');
   initial.displays = twoDisplays();
@@ -1034,6 +1057,31 @@ it('says the widgets follow the default when clearing choices moved nothing', as
       translate('en', 'moveAllFollowing'),
     ),
   );
+});
+
+it('clears the earlier error when moving all widgets is retried', async () => {
+  const initial = state('general');
+  initial.displays = twoDisplays();
+  initial.defaultDisplay = 'Monitor #2';
+  initial.widgets = [cardWidget()];
+  await loadMain(initial);
+  mocks.invoke.mockImplementation((command: string) =>
+    command === 'move_widgets_to_default_display'
+      ? Promise.reject(new Error('board conflict'))
+      : Promise.resolve({ state: 'idle' }),
+  );
+  const fault = document.querySelector<HTMLElement>('[data-fault]')!;
+  (await openMoveDialog()).querySelector<HTMLButtonElement>('.confirm-dialog-accept')!.click();
+  await vi.waitFor(() => expect(fault.hidden).toBe(false));
+
+  mocks.invoke.mockImplementation((command: string) =>
+    command === 'move_widgets_to_default_display'
+      ? Promise.resolve(1)
+      : Promise.resolve({ state: 'idle' }),
+  );
+  (await openMoveDialog()).querySelector<HTMLButtonElement>('.confirm-dialog-accept')!.click();
+
+  await vi.waitFor(() => expect(fault.hidden).toBe(true));
 });
 
 it('has nothing to move without a connected default display', async () => {
