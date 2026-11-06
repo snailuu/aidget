@@ -1,4 +1,8 @@
-use aidget::runtime::ui::{pinned_after_move, records_move, DisplayNames};
+use std::time::{Duration, Instant};
+
+use aidget::runtime::ui::{
+    native_drag_running, pinned_after_move, records_move, DisplayNames, UiState,
+};
 use aidget::widgets::model::WidgetFrame;
 
 fn frame(display: &str, pinned: Option<&str>) -> WidgetFrame {
@@ -9,10 +13,19 @@ fn frame(display: &str, pinned: Option<&str>) -> WidgetFrame {
     }
 }
 
+const BOTH: [&str; 2] = ["Monitor #1", "Monitor #2"];
+
+fn both() -> DisplayNames<'static> {
+    DisplayNames {
+        names: BOTH.to_vec(),
+        primary: Some(0),
+    }
+}
+
 #[test]
 fn dragging_to_another_display_chooses_that_display() {
     assert_eq!(
-        pinned_after_move(&frame("primary", None), "Monitor #2", true).as_deref(),
+        pinned_after_move(&frame("primary", None), "Monitor #2", &both(), true).as_deref(),
         Some("Monitor #2")
     );
 }
@@ -20,7 +33,16 @@ fn dragging_to_another_display_chooses_that_display() {
 #[test]
 fn dragging_within_a_display_keeps_following_the_default() {
     assert_eq!(
-        pinned_after_move(&frame("primary", None), "primary", true),
+        pinned_after_move(&frame("primary", None), "primary", &both(), true),
+        None
+    );
+}
+
+#[test]
+fn dragging_within_a_display_saved_under_its_own_name_keeps_following_the_default() {
+    // The CLI saves the default display by name; a drag reports it as `primary`.
+    assert_eq!(
+        pinned_after_move(&frame("Monitor #1", None), "primary", &both(), true),
         None
     );
 }
@@ -29,7 +51,13 @@ fn dragging_within_a_display_keeps_following_the_default() {
 fn dragging_replaces_a_choice_the_widget_has_left() {
     // The system moved the window away, and the user then settled it here.
     assert_eq!(
-        pinned_after_move(&frame("primary", Some("Monitor #2")), "primary", true).as_deref(),
+        pinned_after_move(
+            &frame("primary", Some("Monitor #2")),
+            "primary",
+            &both(),
+            true
+        )
+        .as_deref(),
         Some("primary")
     );
 }
@@ -37,7 +65,7 @@ fn dragging_replaces_a_choice_the_widget_has_left() {
 #[test]
 fn a_system_move_never_chooses_a_display() {
     assert_eq!(
-        pinned_after_move(&frame("Monitor #2", None), "primary", false),
+        pinned_after_move(&frame("Monitor #2", None), "primary", &both(), false),
         None
     );
 }
@@ -45,7 +73,13 @@ fn a_system_move_never_chooses_a_display() {
 #[test]
 fn a_system_move_keeps_the_chosen_display() {
     assert_eq!(
-        pinned_after_move(&frame("Monitor #2", Some("Monitor #2")), "primary", false).as_deref(),
+        pinned_after_move(
+            &frame("Monitor #2", Some("Monitor #2")),
+            "primary",
+            &both(),
+            false
+        )
+        .as_deref(),
         Some("Monitor #2")
     );
 }
@@ -95,4 +129,20 @@ fn a_window_manager_move_is_recorded_when_no_primary_display_is_reported() {
     };
 
     assert!(records_move("primary", &connected, false, false));
+}
+
+#[test]
+fn a_native_drag_outlives_its_end_only_outside_macos() {
+    let state = UiState::default();
+    *state.drag_started.lock().unwrap() = Some(Instant::now());
+
+    assert_eq!(native_drag_running(&state), !cfg!(target_os = "macos"));
+}
+
+#[test]
+fn a_native_drag_stops_counting_after_it_expires() {
+    let state = UiState::default();
+    *state.drag_started.lock().unwrap() = Some(Instant::now() - Duration::from_secs(31));
+
+    assert!(!native_drag_running(&state));
 }

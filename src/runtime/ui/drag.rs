@@ -1,4 +1,5 @@
 //! Widget drag state and position persistence.
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager, WebviewWindow};
@@ -16,8 +17,14 @@ use super::state::UiState;
 
 /// The widget's chosen display after a move to `display`. Dragging it to another
 /// display is a choice; so is settling on a display other than the chosen one.
-pub fn pinned_after_move(current: &WidgetFrame, display: &str, user_drag: bool) -> Option<String> {
-    if user_drag && (display != current.display || current.pinned_display.is_some()) {
+pub fn pinned_after_move(
+    current: &WidgetFrame,
+    display: &str,
+    connected: &DisplayNames<'_>,
+    user_drag: bool,
+) -> Option<String> {
+    let changed = connected.index(display) != connected.index(&current.display);
+    if user_drag && (changed || current.pinned_display.is_some()) {
         Some(display.to_string())
     } else {
         current.pinned_display.clone()
@@ -40,8 +47,12 @@ pub fn records_move(
 /// Persist the calling widget window's current frame when it has changed. Moves
 /// also arrive here from the system, which must not count as the user's choice.
 pub fn persist_position(app: &AppHandle, window: &WebviewWindow) -> Result<()> {
-    let user_drag = dragging_active(&app.state::<UiState>());
-    persist(app, window, user_drag)
+    let state = app.state::<UiState>();
+    // `end_drag` saves where the drag lands; a stop on the way chooses nothing.
+    if dragging_active(&state) {
+        return Ok(());
+    }
+    persist(app, window, native_drag_running(&state))
 }
 
 fn persist(app: &AppHandle, window: &WebviewWindow, user_drag: bool) -> Result<()> {
@@ -99,7 +110,7 @@ fn persist(app: &AppHandle, window: &WebviewWindow, user_drag: bool) -> Result<(
         (area.position.x, area.position.y),
         scale,
     );
-    frame.pinned_display = pinned_after_move(&current, &frame.display, user_drag);
+    frame.pinned_display = pinned_after_move(&current, &frame.display, &connected, user_drag);
     board.widgets.insert(id.clone(), frame);
     board.revision += 1;
     store.save_board(&board)?;
@@ -110,7 +121,10 @@ fn persist(app: &AppHandle, window: &WebviewWindow, user_drag: bool) -> Result<(
 
 /// Mark the start of a native widget drag.
 pub fn begin_drag(app: &AppHandle) {
-    *app.state::<UiState>().dragging.lock().unwrap() = Some(Instant::now());
+    let state = app.state::<UiState>();
+    let now = Some(Instant::now());
+    *state.dragging.lock().unwrap() = now;
+    *state.drag_started.lock().unwrap() = now;
 }
 
 /// Finish a native widget drag and persist its final position.
@@ -161,8 +175,20 @@ pub(super) fn run_on_main_thread<T: Send + 'static>(
 /// A drag event can be lost when the drag ends over another app. Expire the
 /// freeze so geometry never stays locked.
 pub(super) fn dragging_active(state: &UiState) -> bool {
-    state
-        .dragging
+    unexpired(&state.dragging)
+}
+
+/// Whether a move may belong to a native drag that outlived `end_drag`. Only macOS
+/// waits for the mouse release; elsewhere `start_dragging` returns at once.
+///
+/// shortcut: every move for 30s after a drag begins counts as the user's, and a stop
+/// on the way records that display; read the mouse button as macOS does if that bites.
+pub fn native_drag_running(state: &UiState) -> bool {
+    cfg!(not(target_os = "macos")) && unexpired(&state.drag_started)
+}
+
+fn unexpired(started: &Mutex<Option<Instant>>) -> bool {
+    started
         .lock()
         .unwrap()
         .is_some_and(|started| started.elapsed() < Duration::from_secs(30))
