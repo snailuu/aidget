@@ -24,7 +24,9 @@ use crate::widgets::store::Store;
 
 pub use capture::{mark_loaded, mark_ready, screenshot, screenshot_mode, ScreenshotMode};
 pub use content::{content_token, html_paints_own_surface, html_widget_surface, WidgetState};
-pub use display_labels::{display_name, distinct_names, label_at, top_left_y, ScreenLabel};
+pub use display_labels::{
+    display_name, distinct_names, label_at, top_left_y, wide_text, ScreenLabel,
+};
 pub use drag::{
     begin_drag, end_drag, native_drag_running, persist_position, pinned_after_move, records_move,
 };

@@ -1,4 +1,4 @@
-use aidget::runtime::ui::{distinct_names, label_at, top_left_y, ScreenLabel};
+use aidget::runtime::ui::{distinct_names, label_at, top_left_y, wide_text, ScreenLabel};
 
 fn screens() -> [ScreenLabel; 2] {
     [
@@ -58,4 +58,19 @@ fn different_displays_keep_their_names_so_saved_frames_stay_valid() {
         distinct_names(names(&["Monitor #1", "Monitor #2"])),
         names(&["Monitor #1", "Monitor #2"])
     );
+}
+
+#[test]
+fn a_wide_buffer_ends_at_its_first_nul() {
+    assert_eq!(wide_text(&[0x55, 0x32, 0, 0x58]), "U2");
+}
+
+#[test]
+fn a_full_wide_buffer_keeps_all_its_text() {
+    assert_eq!(wide_text(&[0x55, 0x32]), "U2");
+}
+
+#[test]
+fn an_empty_wide_buffer_has_no_text() {
+    assert_eq!(wide_text(&[0, 0]), "");
 }

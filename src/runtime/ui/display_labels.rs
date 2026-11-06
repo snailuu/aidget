@@ -100,8 +100,112 @@ pub(super) fn screen_labels(app: &AppHandle) -> Result<Vec<ScreenLabel>> {
     })
 }
 
-/// Only macOS replaces its monitor names here; other systems already report theirs.
-#[cfg(not(target_os = "macos"))]
+/// Read the names Windows shows in its display settings; monitors only report a
+/// device path such as `\\.\DISPLAY1`.
+#[cfg(windows)]
+pub(super) fn screen_labels(app: &AppHandle) -> Result<Vec<ScreenLabel>> {
+    let friendly = friendly_names();
+    let monitors = app.available_monitors()?;
+    let named: Vec<_> = monitors
+        .iter()
+        .filter_map(|monitor| Some((monitor, friendly.get(monitor.name()?)?.clone())))
+        .collect();
+    // Windows gives twins one name, where macOS numbers them itself.
+    let labels = distinct_names(named.iter().map(|(_, label)| label.clone()).collect());
+    Ok(named
+        .iter()
+        .zip(labels)
+        .map(|((monitor, _), label)| {
+            let origin = monitor.position();
+            let scale = monitor.scale_factor();
+            ScreenLabel {
+                x: origin.x as f64 / scale,
+                y: origin.y as f64 / scale,
+                label,
+            }
+        })
+        .collect())
+}
+
+/// Friendly monitor names by device path. A display can lack one, and a remote
+/// session can refuse the query; a label is optional, so neither is an error.
+#[cfg(windows)]
+fn friendly_names() -> std::collections::HashMap<String, String> {
+    use windows::Win32::Devices::Display::{
+        DisplayConfigGetDeviceInfo, GetDisplayConfigBufferSizes, QueryDisplayConfig,
+        DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME, DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME,
+        DISPLAYCONFIG_DEVICE_INFO_HEADER, DISPLAYCONFIG_MODE_INFO, DISPLAYCONFIG_PATH_INFO,
+        DISPLAYCONFIG_SOURCE_DEVICE_NAME, DISPLAYCONFIG_TARGET_DEVICE_NAME, QDC_ONLY_ACTIVE_PATHS,
+    };
+    use windows::Win32::Foundation::ERROR_SUCCESS;
+
+    let (mut path_count, mut mode_count) = (0, 0);
+    let mut paths = Vec::new();
+    let mut modes = Vec::new();
+    // SAFETY: each buffer holds as many elements as the count passed with it.
+    let listed = unsafe {
+        GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &mut path_count, &mut mode_count)
+            == ERROR_SUCCESS
+            && {
+                paths.resize(path_count as usize, DISPLAYCONFIG_PATH_INFO::default());
+                modes.resize(mode_count as usize, DISPLAYCONFIG_MODE_INFO::default());
+                QueryDisplayConfig(
+                    QDC_ONLY_ACTIVE_PATHS,
+                    &mut path_count,
+                    paths.as_mut_ptr(),
+                    &mut mode_count,
+                    modes.as_mut_ptr(),
+                    None,
+                ) == ERROR_SUCCESS
+            }
+    };
+    if !listed {
+        return Default::default();
+    }
+    paths.truncate(path_count as usize);
+    paths
+        .iter()
+        .filter_map(|path| {
+            let mut source = DISPLAYCONFIG_SOURCE_DEVICE_NAME {
+                header: DISPLAYCONFIG_DEVICE_INFO_HEADER {
+                    r#type: DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME,
+                    size: std::mem::size_of::<DISPLAYCONFIG_SOURCE_DEVICE_NAME>() as u32,
+                    adapterId: path.sourceInfo.adapterId,
+                    id: path.sourceInfo.id,
+                },
+                ..Default::default()
+            };
+            let mut target = DISPLAYCONFIG_TARGET_DEVICE_NAME {
+                header: DISPLAYCONFIG_DEVICE_INFO_HEADER {
+                    r#type: DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME,
+                    size: std::mem::size_of::<DISPLAYCONFIG_TARGET_DEVICE_NAME>() as u32,
+                    adapterId: path.targetInfo.adapterId,
+                    id: path.targetInfo.id,
+                },
+                ..Default::default()
+            };
+            // SAFETY: each header starts a struct of the size it declares.
+            let found = unsafe {
+                DisplayConfigGetDeviceInfo(&mut source.header) == 0
+                    && DisplayConfigGetDeviceInfo(&mut target.header) == 0
+            };
+            let label = wide_text(&target.monitorFriendlyDeviceName);
+            (found && !label.is_empty()).then(|| (wide_text(&source.viewGdiDeviceName), label))
+        })
+        .collect()
+}
+
+/// The text in a fixed UTF-16 buffer, which ends at its first NUL if it has one.
+pub fn wide_text(buffer: &[u16]) -> String {
+    let length = buffer
+        .iter()
+        .position(|&unit| unit == 0)
+        .unwrap_or(buffer.len());
+    String::from_utf16_lossy(&buffer[..length])
+}
+
+/// Linux reports the monitor model, so it has no friendlier name to look up.
+#[cfg(not(any(target_os = "macos", windows)))]
 pub(super) fn screen_labels(_app: &AppHandle) -> Result<Vec<ScreenLabel>> {
     Ok(Vec::new())
 }
