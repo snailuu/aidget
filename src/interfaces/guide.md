@@ -98,6 +98,7 @@ moves preserve enabled state.
 `list` and write acknowledgements include `enabled`; `get` returns `meta.enabled`.
 This is the persisted target state; native window reconciliation is asynchronous.
 Toggles preserve the frame and board revision unless a missing frame is created.
+Only the main window's switch can move a reopened widget, to its chosen or default display.
 Update acknowledgements always omit the frame.
 
 Setting only the current enabled value is a no-op after revision validation.
@@ -317,8 +318,15 @@ capture.
 | Placement      | User-controlled     | User-controlled     | Under Wayland, the compositor controls stacking and exact placement |
 
 New widgets are placed into the first free slot inside a display's work area,
-preferring the primary display and falling back to another display when needed.
+preferring the default display chosen in the main window's settings, then the
+primary display, and falling back to another display when needed.
 Later moves are user-owned and take precedence over automatic placement.
+
+A `board move` with a display, a drag to another display and the display menu on
+a main-window card all record that display as the frame's `pinnedDisplay`. It
+outranks the default display when the user reopens a widget from the main window,
+which moves the widget to a free slot there. Displays report a stable `name` for
+frames and a `label` for telling the user which display you mean.
 
 On Windows, widget content is served from `http://aidget.localhost`. Native
 `fetch` still requires an HTTPS API origin.

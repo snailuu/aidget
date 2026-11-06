@@ -92,6 +92,7 @@ objc2-app-kit = { version = "0.3", features = [
   "NSGraphics",
   "NSBitmapImageRep",
   "NSResponder",
+  "NSScreen",
   "NSView",
   "NSWindow",
   "objc2-quartz-core",

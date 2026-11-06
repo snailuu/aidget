@@ -7,11 +7,13 @@ use crate::runtime::main_window_state;
 use crate::settings::{
     self, GithubToken, Language, MainPage, Theme, TrayClickAction, UiPreferences,
 };
-use crate::widgets::model::{validate_id, DeletedWidgetSummary, WidgetFrame};
+use crate::widgets::model::{validate_id, DeletedWidgetSummary, DisplayInfo, WidgetFrame};
 use crate::widgets::store::{Store, WidgetEdit};
 
 use super::capture::{capture_widget, screenshot_mode, MAIN_PREVIEW_SCALE};
 use super::content::{content_token, signature};
+use super::geometry::displays;
+use super::relocation::relocate_on_open;
 use super::state::UiState;
 use super::widget_windows::sync_widgets;
 
@@ -29,6 +31,10 @@ pub struct WidgetSummary {
     pub height: f64,
     pub enabled: bool,
     pub created_at: u64,
+    /// Display the widget is on, as stored in its frame.
+    pub display: String,
+    /// Display chosen for this widget, which outranks the default display.
+    pub pinned_display: Option<String>,
 }
 
 /// Installed widget metadata and its optional static preview for the local details dialog.
@@ -82,9 +88,14 @@ pub struct MainState {
     pub github_token: Option<GithubTokenSummary>,
     /// Whether the About page's toggle leaves automatic downloading on.
     pub auto_download: bool,
+    /// Display new widgets try first; `None` keeps automatic placement.
+    pub default_display: Option<String>,
+    /// Connected displays offered by the default display setting.
+    pub displays: Vec<DisplayInfo>,
 }
 
-/// List every valid widget, including disabled widgets.
+/// List every valid widget, including disabled widgets. Display discovery needs
+/// the app handle, so `main_payload` fills `displays`.
 pub fn main_widgets(store: &Store) -> Result<MainState> {
     let settings = settings::load(store.root())?;
     let preferences = settings.preferences();
@@ -111,6 +122,8 @@ pub fn main_widgets(store: &Store) -> Result<MainState> {
             height: frame.h,
             enabled: meta.enabled,
             created_at: store.widget_created_at_ms(&id)?,
+            display: frame.display,
+            pinned_display: frame.pinned_display,
         });
     }
     Ok(MainState {
@@ -131,13 +144,18 @@ pub fn main_widgets(store: &Store) -> Result<MainState> {
         last_page: preferences.last_page,
         github_token,
         auto_download: preferences.auto_download,
+        default_display: preferences.default_display,
+        displays: Vec::new(),
     })
 }
 
 /// Build the current main-page payload from the widget store and settings.
 pub fn main_payload(app: &AppHandle) -> Result<MainState> {
     let store = Store::new(app.state::<UiState>().root.lock().unwrap().clone());
-    main_widgets(&store)
+    Ok(MainState {
+        displays: displays(app)?,
+        ..main_widgets(&store)?
+    })
 }
 
 /// Persist UI preferences and apply the primary-click tray behavior without
@@ -185,7 +203,9 @@ pub fn set_github_token(
     Ok(token.as_ref().map(GithubTokenSummary::from))
 }
 
-/// Enable or disable a desktop widget without changing its saved position.
+/// Enable or disable a desktop widget. Reopening from the main window moves it to
+/// the display it belongs on; MCP and CLI toggles keep the position, as the guide
+/// promises Agents.
 pub fn set_widget_enabled(
     app: &AppHandle,
     id: &str,
@@ -195,6 +215,9 @@ pub fn set_widget_enabled(
     validate_id(id)?;
     let state = app.state::<UiState>();
     let store = Store::new(state.root.lock().unwrap().clone());
+    if enabled {
+        relocate_on_open(app, &store, id)?;
+    }
     store.update(
         id,
         base_revision,

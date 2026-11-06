@@ -4,14 +4,39 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager, WebviewWindow};
 
 use crate::common::error::{Error, Result};
+use crate::widgets::model::WidgetFrame;
 use crate::widgets::store::Store;
 
-use super::geometry::{moved_frame, named_display, same_monitor};
+use super::geometry::{connected_displays, moved_frame, named_display, same_monitor};
 use super::main_window::emit_main;
+use super::relocation::DisplayNames;
 use super::state::UiState;
 
-/// Persist the calling widget window's current frame when it has changed.
+/// The widget's chosen display after a move to `display`. Dragging it to another
+/// display is a choice; so is settling on a display other than the chosen one.
+pub fn pinned_after_move(current: &WidgetFrame, display: &str, user_drag: bool) -> Option<String> {
+    if user_drag && (display != current.display || current.pinned_display.is_some()) {
+        Some(display.to_string())
+    } else {
+        current.pinned_display.clone()
+    }
+}
+
+/// Whether a move changes the stored frame. When a display goes away the system
+/// evacuates its windows; saving that would lose the frame that brings the widget
+/// back, so only a drag may replace a frame whose display is missing.
+pub fn records_move(stored_display: &str, connected: DisplayNames<'_>, user_drag: bool) -> bool {
+    user_drag || connected.index(stored_display).is_some()
+}
+
+/// Persist the calling widget window's current frame when it has changed. Moves
+/// also arrive here from the system, which must not count as the user's choice.
 pub fn persist_position(app: &AppHandle, window: &WebviewWindow) -> Result<()> {
+    let user_drag = dragging_active(&app.state::<UiState>());
+    persist(app, window, user_drag)
+}
+
+fn persist(app: &AppHandle, window: &WebviewWindow, user_drag: bool) -> Result<()> {
     let state = app.state::<UiState>();
     if *state.applying.lock().unwrap() {
         return Ok(());
@@ -27,6 +52,18 @@ pub fn persist_position(app: &AppHandle, window: &WebviewWindow) -> Result<()> {
     let Some(current) = board.widgets.get(&id).cloned() else {
         return Ok(());
     };
+    // With no display at all, there is no position worth recording.
+    let Ok((monitors, primary)) = connected_displays(app) else {
+        return Ok(());
+    };
+    let names: Vec<_> = monitors.iter().map(|(name, _)| name.as_str()).collect();
+    let connected = DisplayNames {
+        names: &names,
+        primary,
+    };
+    if !records_move(&current.display, connected, user_drag) {
+        return Ok(());
+    }
     let position = window.outer_position()?;
     // Let the toolkit pick the screen that holds most of the window. Computing
     // an overlap ourselves would duplicate `NSWindow.screen` and can disagree
@@ -49,13 +86,14 @@ pub fn persist_position(app: &AppHandle, window: &WebviewWindow) -> Result<()> {
     } else {
         named_display(app, &monitor)
     };
-    let frame = moved_frame(
+    let mut frame = moved_frame(
         &current,
         display,
         (position.x, position.y),
         (area.position.x, area.position.y),
         scale,
     );
+    frame.pinned_display = pinned_after_move(&current, &frame.display, user_drag);
 
     if (frame.x - current.x).abs() < 1.0
         && (frame.y - current.y).abs() < 1.0
@@ -79,7 +117,7 @@ pub fn begin_drag(app: &AppHandle) {
 /// Finish a native widget drag and persist its final position.
 pub fn end_drag(app: &AppHandle, window: &WebviewWindow) -> Result<()> {
     *app.state::<UiState>().dragging.lock().unwrap() = None;
-    persist_position(app, window)
+    persist(app, window, true)
 }
 
 /// Push or pop the native grabbing cursor around a macOS window drag.
@@ -108,7 +146,7 @@ pub async fn wait_for_drag_release(app: &AppHandle) -> Result<()> {
 }
 
 #[cfg(target_os = "macos")]
-fn run_on_main_thread<T: Send + 'static>(
+pub(super) fn run_on_main_thread<T: Send + 'static>(
     app: &AppHandle,
     task: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T> {

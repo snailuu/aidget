@@ -5,8 +5,11 @@ use tauri::{
 };
 
 use crate::common::error::Result;
+use crate::settings;
 use crate::widgets::model::{DisplayInfo, WidgetFrame};
 use crate::widgets::store::Store;
+
+use super::display_labels::{label_at, screen_labels};
 
 const PLACEMENT_MARGIN: f64 = 24.0;
 const PLACEMENT_GAP: f64 = 16.0;
@@ -106,6 +109,7 @@ pub fn moved_frame(
         y: (position.1 - area_position.1) as f64 / scale,
         w: current.w,
         h: current.h,
+        pinned_display: current.pinned_display.clone(),
     }
 }
 
@@ -248,10 +252,11 @@ fn overlap_area(left: LogicalRect<f64, f64>, right: LogicalRect<f64, f64>) -> f6
 
 /// Place a newly installed widget in the first visible free space.
 ///
-/// The primary display is preferred when it has room. Otherwise displays are
-/// tried by available area, and an overlapping-but-visible position is used
-/// only when no display has enough free space.
+/// The display chosen in settings is tried first, then the primary display.
+/// Otherwise displays are tried by available area, and an overlapping-but-visible
+/// position is used only when no display has enough free space.
 pub fn place_new_widget(app: &AppHandle, store: &Store, id: &str) -> Result<()> {
+    let preferred = settings::load(store.root())?.default_display;
     let meta = store.load_meta(id)?;
     let board = store.load_board()?;
     let initial = board.widgets.get(id).cloned();
@@ -262,47 +267,17 @@ pub fn place_new_widget(app: &AppHandle, store: &Store, id: &str) -> Result<()> 
         .filter(|widget| widget.enabled)
         .map(|widget| widget.id)
         .collect();
-    let monitors = app.available_monitors()?;
-    if monitors.is_empty() {
-        return Err(crate::common::error::Error::Other(
-            "no display is available".to_string(),
-        ));
-    }
-    let primary = app.primary_monitor()?;
-    let primary_index = primary.as_ref().and_then(|primary| {
-        monitors
-            .iter()
-            .position(|monitor| same_monitor(monitor, primary))
-    });
-    let displays: Vec<_> = monitors
-        .into_iter()
-        .enumerate()
-        .map(|(index, monitor)| (display_name(&monitor, index), monitor))
+    let (displays, primary_index) = connected_displays(app)?;
+    let candidates: Vec<_> = displays
+        .iter()
+        .map(|(name, monitor)| (name.as_str(), logical_area(monitor)))
         .collect();
-    let mut order: Vec<_> = (0..displays.len()).collect();
-    order.sort_by(|&left, &right| {
-        let left_primary = Some(left) == primary_index;
-        let right_primary = Some(right) == primary_index;
-        right_primary.cmp(&left_primary).then_with(|| {
-            let left_area = logical_area(&displays[left].1);
-            let right_area = logical_area(&displays[right].1);
-            right_area.total_cmp(&left_area)
-        })
-    });
+    let order = placement_order(&candidates, primary_index, preferred.as_deref());
 
     let mut areas = Vec::with_capacity(order.len());
     let mut occupied_by_display = Vec::with_capacity(order.len());
     for &index in &order {
-        let (_, monitor) = &displays[index];
-        let work_area = monitor.work_area();
-        let scale = monitor.scale_factor();
-        let area = LogicalRect {
-            position: LogicalPosition::new(0.0, 0.0),
-            size: LogicalSize::new(
-                work_area.size.width as f64 / scale,
-                work_area.size.height as f64 / scale,
-            ),
-        };
+        let area = logical_work_area(&displays[index].1);
         let occupied: Vec<_> = board
             .widgets
             .iter()
@@ -334,9 +309,67 @@ pub fn place_new_widget(app: &AppHandle, store: &Store, id: &str) -> Result<()> 
             y: placed.position.y,
             w: placed.size.width,
             h: placed.size.height,
+            pinned_display: None,
         },
     )?;
     Ok(())
+}
+
+/// Connected displays under the names frames store, with the primary's position.
+pub(super) fn connected_displays(
+    app: &AppHandle,
+) -> Result<(Vec<(String, tauri::Monitor)>, Option<usize>)> {
+    let monitors = app.available_monitors()?;
+    if monitors.is_empty() {
+        return Err(crate::common::error::Error::Other(
+            "no display is available".to_string(),
+        ));
+    }
+    let primary = app.primary_monitor()?;
+    let primary_index = primary.as_ref().and_then(|primary| {
+        monitors
+            .iter()
+            .position(|monitor| same_monitor(monitor, primary))
+    });
+    let displays = monitors
+        .into_iter()
+        .enumerate()
+        .map(|(index, monitor)| (display_name(&monitor, index), monitor))
+        .collect();
+    Ok((displays, primary_index))
+}
+
+/// A display's work area in logical points, measured from its own corner.
+pub(super) fn logical_work_area(monitor: &tauri::Monitor) -> LogicalRect<f64, f64> {
+    let area = monitor.work_area();
+    let scale = monitor.scale_factor();
+    LogicalRect {
+        position: LogicalPosition::new(0.0, 0.0),
+        size: LogicalSize::new(
+            area.size.width as f64 / scale,
+            area.size.height as f64 / scale,
+        ),
+    }
+}
+
+/// Order `(name, logical area)` displays for a new widget: the chosen display,
+/// then the primary display, then the rest by area. A chosen display that is not
+/// connected matches nothing, which leaves the automatic order.
+///
+/// Test seam for `place_new_widget`, which needs a running app.
+pub fn placement_order(
+    displays: &[(&str, f64)],
+    primary: Option<usize>,
+    preferred: Option<&str>,
+) -> Vec<usize> {
+    let rank = |index: usize| (Some(displays[index].0) == preferred, Some(index) == primary);
+    let mut order: Vec<_> = (0..displays.len()).collect();
+    order.sort_by(|&left, &right| {
+        rank(right)
+            .cmp(&rank(left))
+            .then_with(|| displays[right].1.total_cmp(&displays[left].1))
+    });
+    order
 }
 
 fn logical_area(monitor: &tauri::Monitor) -> f64 {
@@ -394,6 +427,7 @@ fn frame_rect_on_display(
 pub fn displays(app: &AppHandle) -> Result<Vec<DisplayInfo>> {
     let monitors = app.available_monitors()?;
     let primary = app.primary_monitor().ok().flatten();
+    let screens = screen_labels(app)?;
     Ok(monitors
         .into_iter()
         .enumerate()
@@ -404,9 +438,13 @@ pub fn displays(app: &AppHandle) -> Result<Vec<DisplayInfo>> {
             let primary = primary
                 .as_ref()
                 .is_some_and(|primary| same_monitor(primary, &monitor));
+            let origin = monitor.position();
+            let label = label_at(&screens, origin.x as f64 / scale, origin.y as f64 / scale)
+                .map_or_else(|| name.clone(), str::to_string);
             DisplayInfo {
                 primary,
                 name,
+                label,
                 x: area.position.x as f64 / scale,
                 y: area.position.y as f64 / scale,
                 width: area.size.width as f64 / scale,
