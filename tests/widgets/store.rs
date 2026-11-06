@@ -60,6 +60,15 @@ fn moving_no_widgets_keeps_the_board_revision() {
 }
 
 #[test]
+fn create_rejects_invalid_settings_before_writing_the_widget() {
+    let (_dir, store) = store();
+    fs::write(store.root().join(SETTINGS_FILE), "not = [valid").unwrap();
+
+    assert!(store.create("note", "Note", WidgetEdit::default()).is_err());
+    assert!(!store.widget_dir("note").unwrap().exists());
+}
+
+#[test]
 fn created_widget_starts_on_the_primary_display_by_default() {
     let (_dir, store) = store();
 

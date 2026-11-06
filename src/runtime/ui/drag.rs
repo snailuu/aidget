@@ -7,7 +7,9 @@ use crate::common::error::{Error, Result};
 use crate::widgets::model::WidgetFrame;
 use crate::widgets::store::Store;
 
-use super::geometry::{connected_displays, moved_frame, named_display, same_monitor};
+use super::geometry::{
+    connected_displays, moved_frame, named_display, physical_geometry, same_monitor,
+};
 use super::main_window::emit_main;
 use super::relocation::DisplayNames;
 use super::state::UiState;
@@ -22,11 +24,17 @@ pub fn pinned_after_move(current: &WidgetFrame, display: &str, user_drag: bool) 
     }
 }
 
-/// Whether a move changes the stored frame. When a display goes away the system
-/// evacuates its windows; saving that would lose the frame that brings the widget
-/// back, so only a drag may replace a frame whose display is missing.
-pub fn records_move(stored_display: &str, connected: DisplayNames<'_>, user_drag: bool) -> bool {
-    user_drag || connected.index(stored_display).is_some()
+/// Whether a move changes the stored frame. A window still at its frame has not
+/// moved, which also covers a click on the drag handle of a widget whose display
+/// is gone. Such a display's windows are evacuated by the system; saving that
+/// would lose the frame that brings them back, so only a drag may replace it.
+pub fn records_move(
+    stored_display: &str,
+    connected: &DisplayNames<'_>,
+    user_drag: bool,
+    at_frame: bool,
+) -> bool {
+    !at_frame && (user_drag || connected.index(stored_display).is_some())
 }
 
 /// Persist the calling widget window's current frame when it has changed. Moves
@@ -52,19 +60,17 @@ fn persist(app: &AppHandle, window: &WebviewWindow, user_drag: bool) -> Result<(
     let Some(current) = board.widgets.get(&id).cloned() else {
         return Ok(());
     };
+    let position = window.outer_position()?;
+    let (x, y, _) = physical_geometry(app, &current);
+    let at_frame = (position.x - x).abs() <= 1 && (position.y - y).abs() <= 1;
     // With no display at all, there is no position worth recording.
     let Ok((monitors, primary)) = connected_displays(app) else {
         return Ok(());
     };
-    let names: Vec<_> = monitors.iter().map(|(name, _)| name.as_str()).collect();
-    let connected = DisplayNames {
-        names: &names,
-        primary,
-    };
-    if !records_move(&current.display, connected, user_drag) {
+    let connected = DisplayNames::of(&monitors, primary);
+    if !records_move(&current.display, &connected, user_drag, at_frame) {
         return Ok(());
     }
-    let position = window.outer_position()?;
     // Let the toolkit pick the screen that holds most of the window. Computing
     // an overlap ourselves would duplicate `NSWindow.screen` and can disagree
     // while the window is straddling the seam.
@@ -94,13 +100,6 @@ fn persist(app: &AppHandle, window: &WebviewWindow, user_drag: bool) -> Result<(
         scale,
     );
     frame.pinned_display = pinned_after_move(&current, &frame.display, user_drag);
-
-    if (frame.x - current.x).abs() < 1.0
-        && (frame.y - current.y).abs() < 1.0
-        && frame.display == current.display
-    {
-        return Ok(());
-    }
     board.widgets.insert(id.clone(), frame);
     board.revision += 1;
     store.save_board(&board)?;

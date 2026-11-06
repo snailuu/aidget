@@ -10,7 +10,7 @@ const EXTERNAL: usize = 1;
 
 fn displays() -> DisplayNames<'static> {
     DisplayNames {
-        names: &NAMES,
+        names: NAMES.to_vec(),
         primary: Some(PRIMARY),
     }
 }
@@ -35,7 +35,7 @@ fn area() -> LogicalRect<f64, f64> {
 
 #[test]
 fn a_widget_follows_the_default_display() {
-    let target = relocation_target(&frame("primary", None), Some("Monitor #2"), displays());
+    let target = relocation_target(&frame("primary", None), Some("Monitor #2"), &displays());
 
     assert_eq!(target, Some(EXTERNAL));
 }
@@ -45,7 +45,7 @@ fn the_chosen_display_outranks_the_default_display() {
     let target = relocation_target(
         &frame("Monitor #2", Some("Monitor #1")),
         Some("Monitor #2"),
-        displays(),
+        &displays(),
     );
 
     assert_eq!(target, Some(PRIMARY));
@@ -54,7 +54,7 @@ fn the_chosen_display_outranks_the_default_display() {
 #[test]
 fn a_widget_stays_put_without_a_chosen_or_default_display() {
     assert_eq!(
-        relocation_target(&frame("Monitor #2", None), None, displays()),
+        relocation_target(&frame("Monitor #2", None), None, &displays()),
         None
     );
 }
@@ -62,7 +62,7 @@ fn a_widget_stays_put_without_a_chosen_or_default_display() {
 #[test]
 fn a_widget_already_on_its_display_stays_put() {
     assert_eq!(
-        relocation_target(&frame("primary", None), Some("Monitor #1"), displays()),
+        relocation_target(&frame("primary", None), Some("Monitor #1"), &displays()),
         None
     );
 }
@@ -73,7 +73,7 @@ fn a_disconnected_chosen_display_does_not_fall_through_to_the_default() {
         relocation_target(
             &frame("primary", Some("Monitor #9")),
             Some("Monitor #2"),
-            displays()
+            &displays()
         ),
         None
     );
@@ -82,7 +82,7 @@ fn a_disconnected_chosen_display_does_not_fall_through_to_the_default() {
 #[test]
 fn a_widget_on_a_disconnected_display_moves_to_its_target() {
     assert_eq!(
-        relocation_target(&frame("Monitor #9", None), Some("Monitor #2"), displays()),
+        relocation_target(&frame("Monitor #9", None), Some("Monitor #2"), &displays()),
         Some(EXTERNAL)
     );
 }
@@ -94,7 +94,7 @@ fn gathering_moves_every_other_widget_without_overlap() {
         ("b".to_string(), frame("primary", None)),
     ]);
 
-    let (frames, moved) = gathered_frames(&widgets, EXTERNAL, displays(), area());
+    let (frames, moved) = gathered_frames(&widgets, EXTERNAL, &displays(), area());
 
     assert_eq!(moved, 2);
     assert_eq!(frames["a"].display, "Monitor #2");
@@ -113,7 +113,7 @@ fn gathering_clears_chosen_displays_and_keeps_widgets_already_there_in_place() {
         ("settled".to_string(), frame("Monitor #2", None)),
     ]);
 
-    let (frames, moved) = gathered_frames(&widgets, EXTERNAL, displays(), area());
+    let (frames, moved) = gathered_frames(&widgets, EXTERNAL, &displays(), area());
 
     assert_eq!(moved, 1);
     assert_eq!(frames["pinned-away"].pinned_display, None);
@@ -129,7 +129,7 @@ fn gathering_avoids_widgets_already_on_the_target() {
         ("visitor".to_string(), frame("primary", None)),
     ]);
 
-    let (frames, _) = gathered_frames(&widgets, EXTERNAL, displays(), area());
+    let (frames, _) = gathered_frames(&widgets, EXTERNAL, &displays(), area());
 
     assert!(frames["visitor"].x >= 24.0 + 360.0);
 }
@@ -138,7 +138,20 @@ fn gathering_avoids_widgets_already_on_the_target() {
 fn gathering_on_the_primary_display_stores_the_primary_name() {
     let widgets = BTreeMap::from([("a".to_string(), frame("Monitor #2", None))]);
 
-    let (frames, _) = gathered_frames(&widgets, PRIMARY, displays(), area());
+    let (frames, _) = gathered_frames(&widgets, PRIMARY, &displays(), area());
 
     assert_eq!(frames["a"].display, "primary");
+}
+
+#[test]
+fn the_primary_name_follows_the_first_display_when_none_is_reported() {
+    let displays = DisplayNames {
+        names: NAMES.to_vec(),
+        primary: None,
+    };
+
+    assert_eq!(
+        relocation_target(&frame("primary", None), Some("Monitor #1"), &displays),
+        None
+    );
 }

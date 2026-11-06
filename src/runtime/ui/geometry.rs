@@ -9,7 +9,7 @@ use crate::settings;
 use crate::widgets::model::{DisplayInfo, WidgetFrame};
 use crate::widgets::store::Store;
 
-use super::display_labels::{label_at, screen_labels};
+use super::display_labels::{display_name, display_names, label_at, screen_labels};
 
 const PLACEMENT_MARGIN: f64 = 24.0;
 const PLACEMENT_GAP: f64 = 16.0;
@@ -43,13 +43,11 @@ pub fn physical_geometry(app: &AppHandle, frame: &WidgetFrame) -> (i32, i32, f64
             primary.is_some() || !monitors.is_empty(),
         )
     } else {
-        match monitors
+        match display_names(&monitors)
             .iter()
-            .enumerate()
-            .find(|(index, monitor)| display_name(monitor, *index) == frame.display)
-            .map(|(_, monitor)| monitor.clone())
+            .position(|name| *name == frame.display)
         {
-            Some(monitor) => (Some(monitor), true),
+            Some(index) => (Some(monitors[index].clone()), true),
             None => (primary.clone().or_else(|| monitors.first().cloned()), false),
         }
     };
@@ -331,12 +329,8 @@ pub(super) fn connected_displays(
             .iter()
             .position(|monitor| same_monitor(monitor, primary))
     });
-    let displays = monitors
-        .into_iter()
-        .enumerate()
-        .map(|(index, monitor)| (display_name(&monitor, index), monitor))
-        .collect();
-    Ok((displays, primary_index))
+    let names = display_names(&monitors);
+    Ok((names.into_iter().zip(monitors).collect(), primary_index))
 }
 
 /// A display's work area in logical points, measured from its own corner.
@@ -373,9 +367,8 @@ pub fn placement_order(
 }
 
 fn logical_area(monitor: &tauri::Monitor) -> f64 {
-    let scale = monitor.scale_factor();
-    let size = monitor.work_area().size;
-    (size.width as f64 / scale) * (size.height as f64 / scale)
+    let size = logical_work_area(monitor).size;
+    size.width * size.height
 }
 
 fn frame_rect_on_display(
@@ -428,13 +421,14 @@ pub fn displays(app: &AppHandle) -> Result<Vec<DisplayInfo>> {
     let monitors = app.available_monitors()?;
     let primary = app.primary_monitor().ok().flatten();
     let screens = screen_labels(app)?;
+    let names = display_names(&monitors);
     Ok(monitors
         .into_iter()
         .enumerate()
         .map(|(index, monitor)| {
             let area = monitor.work_area();
             let scale = monitor.scale_factor();
-            let name = display_name(&monitor, index);
+            let name = names[index].clone();
             let primary = primary
                 .as_ref()
                 .is_some_and(|primary| same_monitor(primary, &monitor));
@@ -455,22 +449,6 @@ pub fn displays(app: &AppHandle) -> Result<Vec<DisplayInfo>> {
         .collect())
 }
 
-/// The name a frame stores for a monitor at `index`.
-///
-/// macOS and Windows report a device name. Wayland can report none, and an
-/// unnamed monitor must not collapse into `primary`, or every multi-screen
-/// frame would be restored onto one screen, so those keep the list position
-/// and origin as the identifier.
-pub fn display_name(monitor: &tauri::Monitor, index: usize) -> String {
-    match monitor.name().filter(|name| !name.is_empty()) {
-        Some(name) => name.clone(),
-        None => {
-            let position = monitor.position();
-            format!("display-{index}@{}:{}", position.x, position.y)
-        }
-    }
-}
-
 /// Whether two handles describe the same physical display.
 pub(super) fn same_monitor(left: &tauri::Monitor, right: &tauri::Monitor) -> bool {
     left.position() == right.position() && left.size() == right.size()
@@ -478,11 +456,13 @@ pub(super) fn same_monitor(left: &tauri::Monitor, right: &tauri::Monitor) -> boo
 
 /// The stored name of a monitor that is not the primary display.
 pub(super) fn named_display(app: &AppHandle, monitor: &tauri::Monitor) -> String {
-    let index = app
-        .available_monitors()
-        .unwrap_or_default()
+    let monitors = app.available_monitors().unwrap_or_default();
+    let index = monitors
         .iter()
         .position(|candidate| same_monitor(candidate, monitor))
         .unwrap_or(0);
-    display_name(monitor, index)
+    display_names(&monitors)
+        .into_iter()
+        .nth(index)
+        .unwrap_or_else(|| display_name(monitor, index))
 }

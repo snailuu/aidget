@@ -1,4 +1,4 @@
-use aidget::runtime::ui::{label_at, top_left_y, ScreenLabel};
+use aidget::runtime::ui::{distinct_names, label_at, top_left_y, ScreenLabel};
 
 fn screens() -> [ScreenLabel; 2] {
     [
@@ -38,4 +38,24 @@ fn an_appkit_origin_above_the_primary_display_becomes_a_negative_y() {
 #[test]
 fn the_primary_display_keeps_its_origin() {
     assert_eq!(top_left_y(0.0, 956.0, 956.0), 0.0);
+}
+
+fn names(values: &[&str]) -> Vec<String> {
+    values.iter().map(|value| value.to_string()).collect()
+}
+
+#[test]
+fn twin_displays_get_different_names() {
+    assert_eq!(
+        distinct_names(names(&["Monitor #7", "Monitor #7", "Monitor #7"])),
+        names(&["Monitor #7", "Monitor #7 (2)", "Monitor #7 (3)"])
+    );
+}
+
+#[test]
+fn different_displays_keep_their_names_so_saved_frames_stay_valid() {
+    assert_eq!(
+        distinct_names(names(&["Monitor #1", "Monitor #2"])),
+        names(&["Monitor #1", "Monitor #2"])
+    );
 }

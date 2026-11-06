@@ -1013,6 +1013,29 @@ it('moves every widget after confirming and reports how many moved', async () =>
   );
 });
 
+it('says the widgets follow the default when clearing choices moved nothing', async () => {
+  stubDialogs();
+  const initial = state('general');
+  initial.displays = twoDisplays();
+  initial.defaultDisplay = 'Monitor #2';
+  initial.widgets = [cardWidget({ display: 'Monitor #2', pinnedDisplay: 'Monitor #2' })];
+  await loadMain(initial);
+  mocks.invoke.mockImplementation((command: string) =>
+    command === 'move_widgets_to_default_display'
+      ? Promise.resolve(0)
+      : Promise.resolve({ state: 'idle' }),
+  );
+
+  const dialog = await openMoveDialog();
+  dialog.querySelector<HTMLButtonElement>('.confirm-dialog-accept')!.click();
+
+  await vi.waitFor(() =>
+    expect(document.querySelector('.toast')?.textContent).toContain(
+      translate('en', 'moveAllFollowing'),
+    ),
+  );
+});
+
 it('has nothing to move without a connected default display', async () => {
   const initial = state('general');
   initial.displays = twoDisplays();

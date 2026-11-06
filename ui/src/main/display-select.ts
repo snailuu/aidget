@@ -9,9 +9,15 @@ export interface DisplaySelectLabels {
 // Select values are strings, so the empty value stands for no chosen display.
 const AUTOMATIC = '';
 
-/** Find a display by its stored name; `primary` follows the system's primary display. */
+/**
+ * Find a display by its stored name. `primary` follows the system's primary display,
+ * or the first one where none is reported, as the Rust side does.
+ */
 export function findDisplay(displays: DisplayInfo[], name: string) {
-  return displays.find((display) => (name === 'primary' ? display.primary : display.name === name));
+  if (name === 'primary') {
+    return displays.find((display) => display.primary) ?? displays[0];
+  }
+  return displays.find((display) => display.name === name);
 }
 
 function displayLabel(display: DisplayInfo, labels: DisplaySelectLabels) {

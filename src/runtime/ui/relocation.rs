@@ -2,7 +2,7 @@
 //! reopening on the chosen or default display, and gathering every widget.
 use std::collections::{BTreeMap, HashSet};
 
-use tauri::{AppHandle, LogicalPosition, LogicalRect, LogicalSize, Manager};
+use tauri::{AppHandle, LogicalPosition, LogicalRect, LogicalSize, Manager, Monitor};
 
 use crate::common::error::{Error, Result};
 use crate::settings;
@@ -14,17 +14,26 @@ use super::state::UiState;
 use super::widget_windows::apply_board;
 
 /// The names frames use for connected displays, with the primary's position.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct DisplayNames<'a> {
-    pub names: &'a [&'a str],
+    pub names: Vec<&'a str>,
     pub primary: Option<usize>,
 }
 
-impl DisplayNames<'_> {
-    /// Resolve a stored name; `primary` follows the system's primary display.
+impl<'a> DisplayNames<'a> {
+    /// Names of the displays `connected_displays` returned.
+    pub(super) fn of(monitors: &'a [(String, Monitor)], primary: Option<usize>) -> Self {
+        DisplayNames {
+            names: monitors.iter().map(|(name, _)| name.as_str()).collect(),
+            primary,
+        }
+    }
+
+    /// Resolve a stored name; `primary` follows the system's primary display, or
+    /// the first one where none is reported, as `physical_geometry` does.
     pub(super) fn index(&self, name: &str) -> Option<usize> {
         if name == "primary" {
-            return self.primary;
+            return self.primary.or((!self.names.is_empty()).then_some(0));
         }
         self.names.iter().position(|candidate| *candidate == name)
     }
@@ -44,7 +53,7 @@ impl DisplayNames<'_> {
 pub fn relocation_target(
     frame: &WidgetFrame,
     default: Option<&str>,
-    displays: DisplayNames<'_>,
+    displays: &DisplayNames<'_>,
 ) -> Option<usize> {
     let target = displays.index(frame.pinned_display.as_deref().or(default)?)?;
     (displays.index(&frame.display) != Some(target)).then_some(target)
@@ -54,7 +63,7 @@ pub fn relocation_target(
 fn frame_on_display(
     frame: &WidgetFrame,
     target: usize,
-    displays: DisplayNames<'_>,
+    displays: &DisplayNames<'_>,
     area: LogicalRect<f64, f64>,
     occupied: &[LogicalRect<f64, f64>],
 ) -> WidgetFrame {
@@ -82,7 +91,7 @@ fn frame_rect(frame: &WidgetFrame) -> LogicalRect<f64, f64> {
 pub fn gathered_frames(
     widgets: &BTreeMap<String, WidgetFrame>,
     target: usize,
-    displays: DisplayNames<'_>,
+    displays: &DisplayNames<'_>,
     area: LogicalRect<f64, f64>,
 ) -> (BTreeMap<String, WidgetFrame>, usize) {
     let on_target = |frame: &WidgetFrame| displays.index(&frame.display) == Some(target);
@@ -114,7 +123,7 @@ fn occupied_on(
     board: &Board,
     id: &str,
     target: usize,
-    displays: DisplayNames<'_>,
+    displays: &DisplayNames<'_>,
 ) -> Result<Vec<LogicalRect<f64, f64>>> {
     let enabled: HashSet<_> = store
         .list()?
@@ -145,20 +154,16 @@ fn relocated(
 ) -> Result<Option<WidgetFrame>> {
     let default = settings::load(store.root())?.default_display;
     let (monitors, primary) = connected_displays(app)?;
-    let names: Vec<_> = monitors.iter().map(|(name, _)| name.as_str()).collect();
-    let displays = DisplayNames {
-        names: &names,
-        primary,
-    };
-    let Some(target) = relocation_target(frame, default.as_deref(), displays) else {
+    let displays = DisplayNames::of(&monitors, primary);
+    let Some(target) = relocation_target(frame, default.as_deref(), &displays) else {
         return Ok(None);
     };
     Ok(Some(frame_on_display(
         frame,
         target,
-        displays,
+        &displays,
         logical_work_area(&monitors[target].1),
-        &occupied_on(store, board, id, target, displays)?,
+        &occupied_on(store, board, id, target, &displays)?,
     )))
 }
 
@@ -197,11 +202,7 @@ pub fn move_widgets_to_default_display(app: &AppHandle) -> Result<usize> {
         .default_display
         .ok_or_else(|| Error::InvalidParams("no default display is selected".to_string()))?;
     let (monitors, primary) = connected_displays(app)?;
-    let names: Vec<_> = monitors.iter().map(|(name, _)| name.as_str()).collect();
-    let displays = DisplayNames {
-        names: &names,
-        primary,
-    };
+    let displays = DisplayNames::of(&monitors, primary);
     let target = displays
         .index(&default)
         .ok_or_else(|| Error::InvalidParams(format!("display `{default}` is not connected")))?;
@@ -216,7 +217,7 @@ pub fn move_widgets_to_default_display(app: &AppHandle) -> Result<usize> {
     let (frames, moved) = gathered_frames(
         &widgets,
         target,
-        displays,
+        &displays,
         logical_work_area(&monitors[target].1),
     );
     apply_board(app, &store.move_widgets(board.revision, frames)?);

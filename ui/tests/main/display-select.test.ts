@@ -111,4 +111,9 @@ describe('display select', () => {
     expect(findDisplay([external, builtIn], 'Monitor #2')).toBe(external);
     expect(findDisplay([external, builtIn], 'Monitor #9')).toBeUndefined();
   });
+
+  it('falls back to the first display when the system reports no primary', () => {
+    expect(findDisplay([external], 'primary')).toBe(external);
+    expect(findDisplay([], 'primary')).toBeUndefined();
+  });
 });

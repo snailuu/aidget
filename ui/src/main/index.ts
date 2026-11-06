@@ -547,7 +547,9 @@ async function moveAllWidgets() {
   try {
     const moved = await invoke<number>('move_widgets_to_default_display');
     toast.show(
-      t('moveAllDone').replace('{count}', String(moved)).replace('{display}', target.label),
+      moved === 0
+        ? t('moveAllFollowing')
+        : t('moveAllDone').replace('{count}', String(moved)).replace('{display}', target.label),
     );
   } catch (error) {
     showFault(`${t('moveAllFailed')}: ${String(error)}`);
