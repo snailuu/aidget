@@ -21,6 +21,7 @@ import {
   X,
 } from 'lucide';
 
+import type { Language } from '../types/rust';
 import { renderAgentStrip } from './agent-controls';
 import { createCommunityPage } from './community';
 import { confirmAction } from './confirm-dialog';
@@ -32,7 +33,12 @@ import {
   type IntegrationMutation,
   type IntegrationResource,
 } from './integration';
-import { formatAgentConfigurationFailure, translate, type Locale, type MessageKey } from './locale';
+import {
+  formatAgentConfigurationFailure,
+  matchSystemLanguage,
+  translate,
+  type MessageKey,
+} from './locale';
 import {
   filteredWidgets,
   isEmpty,
@@ -49,7 +55,7 @@ import {
   type WidgetSortOrder,
   type WidgetSummary,
 } from './model';
-import { applyTheme, resolvedLocale, type Theme } from './preferences';
+import { applyTheme, type Theme } from './preferences';
 import { createPreviewRefresh } from './preview-refresh';
 import { createSegmentedControl } from './segmented-control';
 import { createSortIcon } from './sort-icon';
@@ -87,8 +93,8 @@ interface DeletedWidgetView {
 
 type PreferencesSnapshot = Pick<
   MainState,
-  'theme' | 'language' | 'trayClickAction' | 'lastPage' | 'autoDownload' | 'defaultDisplay'
->;
+  'theme' | 'trayClickAction' | 'lastPage' | 'autoDownload' | 'defaultDisplay'
+> & { language: Language };
 
 const GITHUB_REPOSITORY_URL = 'https://github.com/aidget-ai/aidget';
 const grid = document.querySelector<HTMLElement>('[data-grid]')!;
@@ -179,12 +185,14 @@ let state: MainState | undefined;
 let page: MainPage = 'integrations';
 let filter: WidgetFilter = 'all';
 let theme: Theme = 'system';
-let locale: Locale = 'system';
+let locale: Language = 'en-US';
 let trayClickAction: TrayClickAction = platform === 'linux' ? 'menu' : 'window';
 let githubTokenOperation: 'save' | 'remove' | undefined;
 let githubTokenFailure = '';
-let preferencesBusy = false;
+let preferencesBusy = true;
 let preferenceWrites: Promise<void> = Promise.resolve();
+let pendingMainState: MainState | undefined;
+let languageInitialization: Promise<void> | undefined;
 let widgetSort: WidgetSortOrder = 'newest';
 let integrationInfo: IntegrationInfo | undefined;
 let integrationRequested = false;
@@ -233,12 +241,11 @@ const localDetails = createLocalWidgetDetails(
 );
 
 function t(key: MessageKey) {
-  return translate(resolvedLocale(locale), key);
+  return translate(locale, key);
 }
 
 function applyLocaleStatic() {
-  const resolved = resolvedLocale(locale);
-  document.documentElement.lang = resolved === 'zh' ? 'zh-CN' : 'en';
+  document.documentElement.lang = locale;
   document.querySelectorAll<HTMLElement>('[data-message]').forEach((element) => {
     const key = element.dataset.message as MessageKey;
     element.textContent = t(key);
@@ -387,7 +394,7 @@ function renderIntegrationStatus() {
 function integrationFailureMessage(agentIds: string[], details: string[]) {
   const namesById = new Map(integrationInfo?.agents.map((agent) => [agent.id, agent.name]) ?? []);
   return formatAgentConfigurationFailure(
-    resolvedLocale(locale),
+    locale,
     agentIds.map((id) => namesById.get(id) ?? id),
     details,
   );
@@ -678,7 +685,7 @@ async function setTheme(next: Theme) {
   await persistPreferences(previous);
 }
 
-async function setLanguage(next: Locale) {
+async function setLanguage(next: Language) {
   if (preferencesBusy || next === locale) {
     language.value = locale;
     return;
@@ -1084,14 +1091,23 @@ function syncPreviewRefresh(immediate = false) {
 }
 
 function render(next: MainState) {
+  const nextLanguage = next.language;
+  if (nextLanguage === null) {
+    pendingMainState = next;
+    return;
+  }
+  if (languageInitialization) {
+    pendingMainState = next;
+    return;
+  }
   const initial = state === undefined;
   if (initial) {
     page = next.lastPage;
   }
-  const languageChanged = next.language !== locale;
+  const languageChanged = nextLanguage !== locale;
   if (!preferencesBusy) {
     theme = next.theme;
-    locale = next.language;
+    locale = nextLanguage;
     trayClickAction = next.trayClickAction;
     defaultDisplay = next.defaultDisplay;
     applyTheme(theme);
@@ -1167,9 +1183,51 @@ function showFault(message: string, source: 'operation' | 'broken' = 'operation'
   fault.hidden = false;
 }
 
+function startLanguageInitialization() {
+  languageInitialization ??= (async () => {
+    try {
+      await invoke<Language>('initialize_language', {
+        language: matchSystemLanguage(navigator.languages),
+      });
+      const latest = await invoke<MainState>('main_state');
+      if (latest.language === null) {
+        throw new Error('main-window language is still uninitialized');
+      }
+      const current = pendingMainState?.language != null ? pendingMainState : latest;
+      pendingMainState = undefined;
+      languageInitialization = undefined;
+      preferencesBusy = false;
+      render(current);
+    } catch (error) {
+      pendingMainState = undefined;
+      showFault(`${translate('en-US', 'settingFailed')}: ${String(error)}`);
+      renderPreferences();
+    }
+  })().finally(() => {
+    languageInitialization = undefined;
+  });
+  return languageInitialization;
+}
+
+function receiveMainState(next: MainState) {
+  if (next.language === null) {
+    pendingMainState = next;
+    void startLanguageInitialization();
+    return;
+  }
+  if (languageInitialization) {
+    pendingMainState = next;
+    return;
+  }
+  if (state === undefined) {
+    preferencesBusy = false;
+  }
+  render(next);
+}
+
 async function refreshState() {
   try {
-    render(await invoke<MainState>('main_state'));
+    receiveMainState(await invoke<MainState>('main_state'));
   } catch (error) {
     showFault(`${t('loadFailed')}: ${String(error)}`);
   }
@@ -1177,6 +1235,7 @@ async function refreshState() {
 
 async function toggleWidget(view: WidgetView) {
   view.toggle.disabled = true;
+  view.toggle.setAttribute('aria-busy', 'true');
   fault.hidden = true;
   try {
     await invoke('set_widget_enabled', {
@@ -1189,6 +1248,7 @@ async function toggleWidget(view: WidgetView) {
     await refreshState();
   } finally {
     view.toggle.disabled = false;
+    view.toggle.setAttribute('aria-busy', 'false');
   }
 }
 
@@ -1271,6 +1331,7 @@ async function initializeAutostart() {
 
 autoStart.addEventListener('click', async () => {
   autoStart.disabled = true;
+  autoStart.setAttribute('aria-busy', 'true');
   fault.hidden = true;
   try {
     if (autoStart.getAttribute('aria-checked') === 'true') {
@@ -1283,6 +1344,7 @@ autoStart.addEventListener('click', async () => {
     showFault(`${t('startupFailed')}: ${String(error)}`);
   } finally {
     autoStart.disabled = false;
+    autoStart.setAttribute('aria-busy', 'false');
   }
 });
 
@@ -1348,7 +1410,7 @@ window.addEventListener('resize', renderDescription);
 document.addEventListener('visibilitychange', () => syncPreviewRefresh(true));
 
 language.addEventListener('change', () => {
-  void setLanguage(language.value as Locale);
+  void setLanguage(language.value as Language);
 });
 defaultDisplaySelect.addEventListener('change', () => {
   void setDefaultDisplay(selectedDisplay(defaultDisplaySelect));
@@ -1420,11 +1482,14 @@ renderGithubToken();
 void initializeAutostart().catch((error: unknown) =>
   showFault(`${t('startupFailed')}: ${String(error)}`),
 );
-void listen<MainState>('aidget://main', (event) => render(event.payload));
+void listen<MainState>('aidget://main', (event) => receiveMainState(event.payload));
 void listen('aidget://widgets-ready', () => mainStartup.synchronized());
 
 void (async () => {
   await refreshState();
+  if (languageInitialization) {
+    await languageInitialization;
+  }
   await mainStartup.painted();
 })().catch((error: unknown) => {
   showFault(`${t('startupFailed')}: ${String(error)}`);

@@ -37,6 +37,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         widget_open_url,
         integration_state,
         set_agent_integration,
+        initialize_language,
         set_preferences,
         set_github_token,
         community_list,
@@ -85,8 +86,11 @@ fn persist_window_position(
 }
 
 #[tauri::command]
-fn begin_widget_drag(app: tauri::AppHandle) {
-    ui::begin_drag(&app);
+fn begin_widget_drag(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+) -> std::result::Result<(), String> {
+    ui::begin_drag(&app, &window).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -109,8 +113,10 @@ async fn start_widget_drag(
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = app;
-        window.start_dragging().map_err(|error| error.to_string())
+        window.start_dragging().map_err(|error| error.to_string())?;
+        ui::wait_for_drag_release(&app)
+            .await
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -189,6 +195,17 @@ fn set_agent_integration(
     let root = app.state::<ui::UiState>().root.lock().unwrap().clone();
     crate::agents::integration::set_agent_integration(&Store::new(root), change)
         .map_err(|error| error.to_string())
+}
+
+/// Persist the first system-derived language for the main window.
+#[tauri::command]
+fn initialize_language(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+    language: crate::settings::Language,
+) -> std::result::Result<crate::settings::Language, String> {
+    ui::require_main_window_label(window.label()).map_err(|error| error.to_string())?;
+    ui::initialize_language(&app, language).map_err(|error| error.to_string())
 }
 
 /// Persist appearance and behavior preferences and apply the primary-click tray

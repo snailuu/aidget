@@ -237,8 +237,7 @@
                 <label class="settings-row">
                   <span class="setting-label" data-message="language"></span>
                   <select class="language-select" data-language>
-                    <option value="system" data-message="system"></option>
-                    <option value="en">English</option>
+                    <option value="en-US">English</option>
                     <option value="zh-CN">简体中文</option>
                   </select>
                 </label>
@@ -376,7 +375,15 @@
           <h1 class="visually-hidden" id="about-title" data-message="aboutTitle"></h1>
           <div class="settings-list">
             <div class="settings-row">
-              <span class="setting-label" data-message="version"></span>
+              <div class="setting-copy">
+                <span class="setting-label" data-message="version"></span>
+                <span
+                  class="setting-note"
+                  data-update-version-debug-note
+                  data-message="devVersionDescription"
+                  hidden
+                ></span>
+              </div>
               <div class="update-version-actions">
                 <span class="setting-value" data-version>—</span>
                 <span class="visually-hidden" data-update-status role="status">—</span>
@@ -386,7 +393,21 @@
               </div>
             </div>
             <div class="settings-row update-notes-row" data-update-notes-row>
-              <span class="setting-label" data-message="updateNotes"></span>
+              <div class="setting-copy">
+                <span class="setting-label" data-message="updateNotes"></span>
+                <span
+                  class="setting-note"
+                  data-update-notes-limit-note
+                  data-message="devUpdateNotesDescription"
+                  hidden
+                ></span>
+                <span
+                  class="setting-note"
+                  data-update-notes-empty
+                  data-message="noUpdateNotes"
+                  hidden
+                ></span>
+              </div>
               <button
                 class="secondary-button"
                 type="button"
@@ -396,7 +417,16 @@
               ></button>
             </div>
             <div class="settings-row">
-              <span class="setting-label" data-message="autoDownload"></span>
+              <div class="setting-copy">
+                <span class="setting-label" data-message="autoDownload"></span>
+                <span
+                  class="setting-note"
+                  id="update-auto-download-debug-note"
+                  data-update-debug-note
+                  data-message="autoDownloadDebugUnavailable"
+                  hidden
+                ></span>
+              </div>
               <button
                 class="switch"
                 type="button"

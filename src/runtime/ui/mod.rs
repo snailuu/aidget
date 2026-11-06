@@ -27,20 +27,21 @@ pub use content::{content_token, html_paints_own_surface, html_widget_surface, W
 pub use display_labels::{
     display_name, distinct_names, label_at, top_left_y, wide_text, ScreenLabel,
 };
-pub use drag::{
-    begin_drag, end_drag, native_drag_running, persist_position, pinned_after_move, records_move,
-};
 #[cfg(target_os = "macos")]
-pub use drag::{set_dragging_cursor, wait_for_drag_release};
+pub use drag::set_dragging_cursor;
+pub use drag::{
+    begin_drag, end_drag, finish_gesture, gesture_owns, persist_position, pinned_after_move,
+    records_move, start_gesture, wait_for_drag_release,
+};
 pub use geometry::{
     best_display_placement, centered_position, displays, moved_frame, physical_geometry,
     place_frame, place_in_work_area, place_new_widget, placement_order,
 };
 pub use main_page::{
-    cached_preview, delete_widget, deleted_widget_preview, local_widget_details, main_payload,
-    main_widget_preview, main_widgets, purge_deleted_widget, restore_widget, set_github_token,
-    set_preferences, set_widget_enabled, GithubTokenSummary, LocalWidgetDetails, MainState,
-    WidgetSummary,
+    cached_preview, delete_widget, deleted_widget_preview, initialize_language,
+    local_widget_details, main_payload, main_widget_preview, main_widgets, purge_deleted_widget,
+    restore_widget, set_github_token, set_preferences, set_widget_enabled, GithubTokenSummary,
+    LocalWidgetDetails, MainState, WidgetSummary,
 };
 pub use main_window::{mark_main_painted, show_main, show_main_now};
 pub use relocation::{
@@ -48,8 +49,8 @@ pub use relocation::{
     set_widget_display, DisplayNames,
 };
 pub use state::{
-    record_revision, require_main_window_label, retain_widget_revisions, widget_id, UiState,
-    MAIN_LABEL,
+    record_revision, require_main_window_label, retain_widget_revisions, widget_id, DragGesture,
+    UiState, MAIN_LABEL,
 };
 pub use watcher::is_relevant;
 pub use widget_windows::{apply_board, start_initial_widgets, sync_widgets, widget_payload};

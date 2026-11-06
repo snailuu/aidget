@@ -1,8 +1,9 @@
-export type Locale = 'system' | 'en' | 'zh-CN';
-export type MessageKey = keyof typeof messages.en;
+import type { Language } from '../types/rust';
+
+export type MessageKey = keyof (typeof messages)['en-US'];
 
 const messages = {
-  en: {
+  'en-US': {
     communityFetching: 'Fetching data...',
     communityDismissBanner: 'Dismiss community introduction',
     communityIntroduction:
@@ -116,9 +117,12 @@ const messages = {
     save: 'Save',
     remove: 'Remove',
     version: 'Version',
+    devVersionDescription:
+      'Development builds are fixed at version 0.1.1; stable releases receive the new version at build time.',
     checkNow: 'Check for updates',
     updateAction: 'Update',
     autoDownload: 'Download updates automatically',
+    autoDownloadDebugUnavailable: 'Development builds cannot download updates automatically',
     updateIdle: 'Not checked yet',
     updateChecking: 'Checking…',
     updateLatest: 'Up to date',
@@ -130,6 +134,10 @@ const messages = {
     updateInstalling: 'Updating…',
     updateFailed: 'Update failed',
     updateNotes: 'Release notes',
+    devUpdateNotesDescription: 'Development builds show only the latest 5 stable release notes.',
+    maintenanceOnlyNotice:
+      'This release contains internal maintenance only; app features and behavior remain unchanged.',
+    noUpdateNotes: 'No release notes available',
     updateNotesTitle: 'v{version} release notes',
     otherChanges: 'Other changes',
     open: 'Open',
@@ -174,7 +182,7 @@ const messages = {
     maximize: 'Maximize',
     close: 'Close',
   },
-  zh: {
+  'zh-CN': {
     communityFetching: '正在拉取数据...',
     communityDismissBanner: '关闭社区介绍',
     communityIntroduction: '这里是由 aidget 社区经过安全评审的小组件，你可前往 ',
@@ -286,9 +294,11 @@ const messages = {
     save: '保存',
     remove: '移除',
     version: '版本',
+    devVersionDescription: '开发版固定为 0.1.1 版本，发布正式版时会动态注入新版本号。',
     checkNow: '检查更新',
     updateAction: '更新',
     autoDownload: '自动下载更新',
+    autoDownloadDebugUnavailable: '开发版不支持自动下载更新',
     updateIdle: '尚未检查',
     updateChecking: '正在检查…',
     updateLatest: '已是最新版本',
@@ -300,6 +310,9 @@ const messages = {
     updateInstalling: '正在更新…',
     updateFailed: '更新失败',
     updateNotes: '更新内容',
+    devUpdateNotesDescription: '开发版只展示近 5 个稳定版本更新内容',
+    maintenanceOnlyNotice: '本次更新仅内部维护，应用功能和使用方式保持不变。',
+    noUpdateNotes: '暂无更新内容',
     updateNotesTitle: 'v{version} 更新内容',
     otherChanges: '其他更新',
     open: '打开',
@@ -345,11 +358,21 @@ const messages = {
   },
 } as const;
 
-export function systemLocale(languages: readonly string[]): 'en' | 'zh' {
-  return languages.some((language) => language.toLowerCase().startsWith('zh')) ? 'zh' : 'en';
+/** Match the first supported BCP 47 language in preference order. */
+export function matchSystemLanguage(languages: readonly string[]): Language {
+  for (const language of languages) {
+    const primary = /^([a-z]{2,8})(?:-[a-z0-9]{1,8})*$/i.exec(language)?.[1].toLowerCase();
+    if (primary === 'zh') {
+      return 'zh-CN';
+    }
+    if (primary === 'en') {
+      return 'en-US';
+    }
+  }
+  return 'en-US';
 }
 
-export function translate(locale: 'en' | 'zh', key: MessageKey) {
+export function translate(locale: Language, key: MessageKey) {
   return messages[locale][key];
 }
 
@@ -357,7 +380,7 @@ export function translate(locale: 'en' | 'zh', key: MessageKey) {
  * Render a localized configuration failure for one or several Agents.
  */
 export function formatAgentConfigurationFailure(
-  locale: 'en' | 'zh',
+  locale: Language,
   agentNames: readonly string[],
   details: readonly string[],
 ) {
@@ -365,7 +388,7 @@ export function formatAgentConfigurationFailure(
   if (uniqueNames.length === 0) {
     throw new Error('at least one Agent is required');
   }
-  const separator = locale === 'zh' ? '；' : '; ';
+  const separator = locale === 'zh-CN' ? '；' : '; ';
   const template = translate(
     locale,
     uniqueNames.length === 1

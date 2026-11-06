@@ -1,5 +1,4 @@
-import type { DisplayInfo } from '../types/rust';
-import type { Locale } from './locale';
+import type { DisplayInfo, Language } from '../types/rust';
 import type { Theme } from './preferences';
 
 export interface WidgetSummary {
@@ -32,7 +31,7 @@ export interface MainState {
   broken: { id: string; error: string }[];
   version: string;
   theme: Theme;
-  language: Locale;
+  language: Language | null;
   trayClickAction: TrayClickAction;
   lastPage: MainPage;
   githubToken: GithubTokenSummary | null;
