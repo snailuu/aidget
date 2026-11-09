@@ -13,6 +13,7 @@ use crate::widgets::store::{Store, WidgetEdit};
 use super::capture::{capture_widget, screenshot_mode, MAIN_PREVIEW_SCALE};
 use super::content::{content_token, signature};
 use super::geometry::displays;
+use super::relocation::relocate_on_open;
 use super::state::UiState;
 use super::widget_windows::sync_widgets;
 
@@ -30,6 +31,10 @@ pub struct WidgetSummary {
     pub height: f64,
     pub enabled: bool,
     pub created_at: u64,
+    /// Display the widget is on, as stored in its frame.
+    pub display: String,
+    /// Display chosen for this widget, which outranks the default display.
+    pub pinned_display: Option<String>,
 }
 
 /// Installed widget metadata and its optional static preview for the local details dialog.
@@ -127,6 +132,8 @@ pub fn main_widgets(store: &Store) -> Result<MainState> {
             height: frame.h,
             enabled: meta.enabled,
             created_at: store.widget_created_at_ms(&id)?,
+            display: frame.display,
+            pinned_display: frame.pinned_display,
         });
     }
     Ok(MainState {
@@ -216,7 +223,9 @@ pub fn set_github_token(
     Ok(token.as_ref().map(GithubTokenSummary::from))
 }
 
-/// Enable or disable a desktop widget without changing its saved position.
+/// Enable or disable a desktop widget. Reopening from the main window moves it to
+/// the display it belongs on; MCP and CLI toggles keep the position, as the guide
+/// promises Agents.
 pub fn set_widget_enabled(
     app: &AppHandle,
     id: &str,
@@ -234,8 +243,14 @@ pub fn set_widget_enabled(
             ..WidgetEdit::default()
         },
     )?;
+    // The widget is enabled by now, so it opens even if it could not be moved.
+    let relocated = if enabled {
+        relocate_on_open(app, &store, id)
+    } else {
+        Ok(())
+    };
     sync_widgets(app);
-    Ok(())
+    relocated
 }
 
 /// Move a widget into trash and remove its main-window preview state.

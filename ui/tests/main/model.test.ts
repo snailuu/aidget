@@ -22,6 +22,8 @@ const base: WidgetSummary = {
   height: 220,
   enabled: true,
   createdAt: 10,
+  display: 'primary',
+  pinnedDisplay: null,
 };
 
 describe('main window widgets', () => {

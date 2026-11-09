@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager, WebviewWindow};
 
 use crate::common::error::{Error, Result};
+use crate::widgets::model::WidgetFrame;
 use crate::widgets::store::Store;
 
 use super::geometry::{
@@ -12,6 +13,27 @@ use super::geometry::{
 use super::main_window::emit_main;
 use super::relocation::DisplayNames;
 use super::state::{DragGesture, UiState};
+
+/// The widget's chosen display after a move to `display`. Dragging it to another
+/// display is a choice; so is settling on a display other than the chosen one. A
+/// drag within the chosen display keeps its name: `primary` would follow the system
+/// setting instead of that monitor.
+pub fn pinned_after_move(
+    current: &WidgetFrame,
+    display: &str,
+    connected: &DisplayNames<'_>,
+    user_drag: bool,
+) -> Option<String> {
+    let target = connected.index(display);
+    let changed = target != connected.index(&current.display);
+    let chosen = current.pinned_display.as_deref();
+    let on_choice = chosen.is_some_and(|name| connected.index(name) == target);
+    if user_drag && !on_choice && (changed || chosen.is_some()) {
+        Some(display.to_string())
+    } else {
+        current.pinned_display.clone()
+    }
+}
 
 /// Whether a move changes the stored frame. A finished drag always does, even onto
 /// the spot the frame computes to: that spot may only stand in for a display that
@@ -84,13 +106,14 @@ fn persist(app: &AppHandle, window: &WebviewWindow, user_drag: bool) -> Result<(
     } else {
         named_display(app, &monitor)
     };
-    let frame = moved_frame(
+    let mut frame = moved_frame(
         &current,
         display,
         (position.x, position.y),
         (area.position.x, area.position.y),
         scale,
     );
+    frame.pinned_display = pinned_after_move(&current, &frame.display, &connected, user_drag);
     board.widgets.insert(id.clone(), frame);
     board.revision += 1;
     store.save_board(&board)?;
@@ -204,7 +227,7 @@ fn mouse_pressed(app: &AppHandle) -> Result<bool> {
 }
 
 #[cfg(not(windows))]
-fn run_on_main_thread<T: Send + 'static>(
+pub(super) fn run_on_main_thread<T: Send + 'static>(
     app: &AppHandle,
     task: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T> {

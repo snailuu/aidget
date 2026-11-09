@@ -67,6 +67,7 @@ fn clamps_frames_into_the_work_area() {
         w: 900.0,
         h: 100.0,
         unplaced: false,
+        pinned_display: None,
     };
     let clamped = frame.clamped((1440.0, 900.0, 1440.0, 900.0));
     assert_eq!(clamped.x, 540.0);
@@ -91,6 +92,7 @@ fn fitting_a_frame_keeps_cross_display_offsets() {
         w: 900.0,
         h: 100.0,
         unplaced: false,
+        pinned_display: None,
     };
     let fitted = frame.fitted((1512.0, 893.0, 1512.0, 893.0));
     assert_eq!(fitted.x, -120.0);
@@ -98,6 +100,29 @@ fn fitting_a_frame_keeps_cross_display_offsets() {
     assert_eq!(fitted.w, 900.0);
     assert_eq!(fitted.h, 120.0);
 }
+
+#[test]
+fn fitting_a_frame_keeps_the_chosen_display() {
+    let frame = WidgetFrame {
+        pinned_display: Some("Monitor #2".to_string()),
+        ..WidgetFrame::default_for(0)
+    };
+
+    let fitted = frame.fitted((1512.0, 893.0, 1512.0, 893.0));
+
+    assert_eq!(fitted.pinned_display.as_deref(), Some("Monitor #2"));
+}
+
+#[test]
+fn frames_without_a_chosen_display_keep_the_existing_format() {
+    let value = serde_json::to_value(WidgetFrame::default_for(0)).unwrap();
+    assert!(value.get("pinnedDisplay").is_none());
+
+    let stored = r#"{"display":"primary","x":1.0,"y":2.0,"w":3.0,"h":4.0}"#;
+    let frame: WidgetFrame = serde_json::from_str(stored).unwrap();
+    assert_eq!(frame.pinned_display, None);
+}
+
 #[test]
 fn enabled_update_state_is_required_host_metadata() {
     let meta = aidget::widgets::model::WidgetMeta::new("note", "Note");

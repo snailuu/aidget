@@ -6,6 +6,7 @@ use aidget::widgets::model::{validate_id, WidgetFrame, WidgetPermission, MAX_WID
 use aidget::widgets::store::{
     patch_html_region, Store, WidgetEdit, AGENTS_FILE, CONFIG_FILE, HTML_FILE, SETTINGS_FILE,
 };
+use std::collections::BTreeMap;
 use std::fs;
 
 use tempfile::TempDir;
@@ -15,6 +16,47 @@ fn store() -> (TempDir, Store) {
     let store = Store::new(dir.path());
     store.ensure_layout().unwrap();
     (dir, store)
+}
+
+#[test]
+fn moving_several_widgets_is_one_board_revision() {
+    let (_dir, store) = store();
+    store.create("a", "A", WidgetEdit::default()).unwrap();
+    store.create("b", "B", WidgetEdit::default()).unwrap();
+    let revision = store.load_board().unwrap().revision;
+    let frames = BTreeMap::from([
+        ("a".to_string(), WidgetFrame::default_for(5)),
+        ("b".to_string(), WidgetFrame::default_for(6)),
+    ]);
+
+    let board = store.move_widgets(revision, frames).unwrap();
+
+    assert_eq!(board.revision, revision + 1);
+    assert_eq!(board.widgets["a"].x, WidgetFrame::default_for(5).x);
+    assert_eq!(board.widgets["b"].x, WidgetFrame::default_for(6).x);
+}
+
+#[test]
+fn moving_several_widgets_rejects_a_stale_board_and_writes_nothing() {
+    let (_dir, store) = store();
+    store.create("a", "A", WidgetEdit::default()).unwrap();
+    let revision = store.load_board().unwrap().revision;
+    let frames = BTreeMap::from([("a".to_string(), WidgetFrame::default_for(5))]);
+
+    let error = store.move_widgets(revision - 1, frames).unwrap_err();
+
+    assert!(matches!(error, Error::RevisionConflict { .. }));
+    assert_eq!(store.load_board().unwrap().revision, revision);
+}
+
+#[test]
+fn moving_no_widgets_keeps_the_board_revision() {
+    let (_dir, store) = store();
+    let revision = store.load_board().unwrap().revision;
+
+    let board = store.move_widgets(revision, BTreeMap::new()).unwrap();
+
+    assert_eq!(board.revision, revision);
 }
 
 #[test]
@@ -945,6 +987,7 @@ fn deleted_widget_can_be_restored_with_its_saved_frame() {
         w: 420.0,
         h: 260.0,
         unplaced: false,
+        pinned_display: None,
     };
     let revision = store.load_board().unwrap().revision;
     store.move_widget("note", revision, frame.clone()).unwrap();

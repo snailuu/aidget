@@ -21,7 +21,11 @@ export function findDisplay(displays: DisplayInfo[], name: string) {
 }
 
 function displayLabel(display: DisplayInfo, labels: DisplaySelectLabels) {
-  const parts = [display.name, `${Math.round(display.width)} × ${Math.round(display.height)}`];
+  const parts = [display.label];
+  // Without a system name, the size is what tells two displays apart.
+  if (display.label === display.name) {
+    parts.push(`${Math.round(display.width)} × ${Math.round(display.height)}`);
+  }
   if (display.primary) {
     parts.push(labels.primary);
   }

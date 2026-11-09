@@ -66,6 +66,7 @@ fn main_window_lists_all_widgets_and_marks_enabled_state() {
             w: 420.0,
             h: 260.0,
             unplaced: false,
+            pinned_display: None,
         },
     );
     store.save_board(&board).unwrap();
@@ -285,6 +286,8 @@ fn main_state_exposes_widget_metadata_in_camel_case() {
             height: 220.0,
             enabled: true,
             created_at: 1_761_158_300_000,
+            display: "primary".to_string(),
+            pinned_display: Some("Monitor #2".to_string()),
         }],
         broken: vec![],
         deleted_widgets: vec![DeletedWidgetSummary {
@@ -312,6 +315,8 @@ fn main_state_exposes_widget_metadata_in_camel_case() {
 
     let deleted = value.get("deletedWidgets").unwrap();
     assert_eq!(value["defaultDisplay"], "Monitor #2");
+    assert_eq!(value["widgets"][0]["display"], "primary");
+    assert_eq!(value["widgets"][0]["pinnedDisplay"], "Monitor #2");
     assert_eq!(value["widgets"][0]["createdAt"], 1_761_158_300_000_u64);
     assert_eq!(deleted[0]["trashName"], "note-20261022T000000");
     assert_eq!(deleted[0]["hasPreview"], true);

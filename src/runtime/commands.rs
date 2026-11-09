@@ -25,6 +25,8 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         main_widget_cached_preview,
         main_widget_details,
         set_widget_enabled,
+        set_widget_display,
+        move_widgets_to_default_display,
         delete_widget,
         restore_widget,
         deleted_widget_preview,
@@ -291,6 +293,24 @@ async fn set_widget_enabled(
     base_revision: u64,
 ) -> std::result::Result<(), String> {
     ui::set_widget_enabled(&app, &id, enabled, base_revision).map_err(|error| error.to_string())
+}
+
+/// Choose one widget's display, or return it to the default display.
+#[tauri::command]
+async fn set_widget_display(
+    app: tauri::AppHandle,
+    id: String,
+    display: Option<String>,
+) -> std::result::Result<(), String> {
+    ui::set_widget_display(&app, &id, display).map_err(|error| error.to_string())
+}
+
+/// Gather every widget on the default display and report how many moved.
+#[tauri::command]
+async fn move_widgets_to_default_display(
+    app: tauri::AppHandle,
+) -> std::result::Result<usize, String> {
+    ui::move_widgets_to_default_display(&app).map_err(|error| error.to_string())
 }
 
 #[tauri::command]

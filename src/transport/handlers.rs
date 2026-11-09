@@ -300,6 +300,7 @@ fn r#move(app: AppHandle, store: &Store, params: Value) -> Result<Value> {
         .cloned()
         .unwrap_or_else(|| WidgetFrame::default_for(board.widgets.len()));
     if let Some(display) = request.display {
+        frame.pinned_display = Some(display.clone());
         frame.display = display;
     }
     if let Some(x) = request.x {

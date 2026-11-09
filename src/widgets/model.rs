@@ -143,6 +143,10 @@ pub struct WidgetFrame {
     /// GUI places the widget for real before it first opens it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub unplaced: bool,
+    /// Display the user chose for this widget. It outranks the default display
+    /// and survives the system moving the window off a sleeping display.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned_display: Option<String>,
 }
 
 impl WidgetFrame {
@@ -156,6 +160,7 @@ impl WidgetFrame {
             w: 360.0,
             h: 220.0,
             unplaced: false,
+            pinned_display: None,
         }
     }
 
@@ -182,6 +187,7 @@ impl WidgetFrame {
             w,
             h,
             unplaced: self.unplaced,
+            pinned_display: self.pinned_display.clone(),
         }
     }
 }
@@ -388,6 +394,8 @@ pub struct WidgetDocument {
 pub struct DisplayInfo {
     /// Stable identifier stored in frames and settings.
     pub name: String,
+    /// Name the system shows for this display; equals `name` when it has none.
+    pub label: String,
     pub primary: bool,
     pub x: f64,
     pub y: f64,
