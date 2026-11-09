@@ -81,16 +81,81 @@ fn created_widget_starts_on_the_primary_display_by_default() {
 }
 
 #[test]
+fn a_widget_created_on_a_chosen_display_waits_for_the_gui_to_place_it() {
+    let (_dir, store) = store();
+    choose_display(&store, "Monitor #2");
+
+    store.create("note", "Note", WidgetEdit::default()).unwrap();
+
+    assert!(store.load_board().unwrap().widgets["note"].unplaced);
+}
+
+#[test]
+fn a_widget_created_without_a_chosen_display_keeps_its_automatic_frame() {
+    let (_dir, store) = store();
+
+    store.create("note", "Note", WidgetEdit::default()).unwrap();
+
+    assert!(!store.load_board().unwrap().widgets["note"].unplaced);
+}
+
+#[test]
+fn a_move_before_the_first_opening_is_not_placed_over() {
+    let (_dir, store) = store();
+    choose_display(&store, "Monitor #2");
+    store.create("note", "Note", WidgetEdit::default()).unwrap();
+    let board = store.load_board().unwrap();
+    let mut frame = board.widgets["note"].clone();
+    frame.x = 5.0;
+
+    let board = store.move_widget("note", board.revision, frame).unwrap();
+
+    assert!(!board.widgets["note"].unplaced);
+    assert_eq!(board.widgets["note"].x, 5.0);
+}
+
+#[test]
+fn a_frame_stops_waiting_for_placement_once_it_is_moved() {
+    let (_dir, store) = store();
+    choose_display(&store, "Monitor #2");
+    store.create("note", "Note", WidgetEdit::default()).unwrap();
+    assert!(store.unplaced_frame("note").unwrap().is_some());
+
+    let board = store.load_board().unwrap();
+    let frame = board.widgets["note"].clone();
+    store.move_widget("note", board.revision, frame).unwrap();
+
+    assert!(store.unplaced_frame("note").unwrap().is_none());
+}
+
+#[test]
+fn a_move_onto_the_same_spot_during_placement_is_not_overwritten() {
+    let (_dir, store) = store();
+    choose_display(&store, "Monitor #2");
+    store.create("note", "Note", WidgetEdit::default()).unwrap();
+    let board = store.load_board().unwrap();
+    let pending = board.widgets["note"].clone();
+    store
+        .move_widget("note", board.revision, pending.clone())
+        .unwrap();
+    let computed = WidgetFrame {
+        x: 24.0,
+        y: 24.0,
+        unplaced: false,
+        ..pending.clone()
+    };
+
+    let board = store
+        .set_initial_frame("note", Some(&pending), computed)
+        .unwrap();
+
+    assert_eq!(board.widgets["note"].x, pending.x);
+}
+
+#[test]
 fn created_widget_starts_on_the_chosen_display() {
     let (_dir, store) = store();
-    save_preferences(
-        store.root(),
-        UiPreferences {
-            default_display: Some("Monitor #2".to_string()),
-            ..UiPreferences::default()
-        },
-    )
-    .unwrap();
+    choose_display(&store, "Monitor #2");
 
     store.create("note", "Note", WidgetEdit::default()).unwrap();
 
@@ -98,6 +163,17 @@ fn created_widget_starts_on_the_chosen_display() {
         store.load_board().unwrap().widgets["note"].display,
         "Monitor #2"
     );
+}
+
+fn choose_display(store: &Store, display: &str) {
+    save_preferences(
+        store.root(),
+        UiPreferences {
+            default_display: Some(display.to_string()),
+            ..UiPreferences::default()
+        },
+    )
+    .unwrap();
 }
 
 #[test]
@@ -459,6 +535,49 @@ fn create_assigns_frame_and_revision() {
         },
     );
     assert!(duplicate.is_err());
+}
+
+#[test]
+fn minimum_host_version_is_created_updated_and_preserved_by_patch() {
+    let (_dir, store) = store();
+    let created = store
+        .create(
+            "note",
+            "Note",
+            WidgetEdit {
+                min_host_version: Some(Some("2.0.0")),
+                html: Some("<p data-aidget-region=\"value\">one</p>"),
+                ..WidgetEdit::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(created.min_host_version.as_deref(), Some("2.0.0"));
+    let patched = store
+        .patch_region("note", created.revision, "value", "two")
+        .unwrap();
+    assert_eq!(patched.min_host_version.as_deref(), Some("2.0.0"));
+    let updated = store
+        .update(
+            "note",
+            patched.revision,
+            WidgetEdit {
+                min_host_version: Some(Some("2.1.0")),
+                ..WidgetEdit::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(updated.min_host_version.as_deref(), Some("2.1.0"));
+    let preserved = store
+        .update(
+            "note",
+            updated.revision,
+            WidgetEdit {
+                title: Some("Renamed"),
+                ..WidgetEdit::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(preserved.min_host_version.as_deref(), Some("2.1.0"));
 }
 
 #[test]
@@ -867,6 +986,7 @@ fn deleted_widget_can_be_restored_with_its_saved_frame() {
         y: 220.0,
         w: 420.0,
         h: 260.0,
+        unplaced: false,
         pinned_display: None,
     };
     let revision = store.load_board().unwrap().revision;

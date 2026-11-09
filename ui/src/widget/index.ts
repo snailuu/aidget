@@ -2,12 +2,19 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 
+import { createAnimationHost, parseAnimationRequest } from './animation-host';
 import {
   errorMessage,
   failureOf,
+  parseDiagnostic,
+  parseDiagnosticDropped,
+  parseDiagnosticReady,
+  parsePointerEvent,
+  parsePointerSubscription,
   parseReady,
   parseRequest,
   permissionsMessage,
+  pointerMessage,
   resultMessage,
   routeRequest,
 } from './bridge';
@@ -33,6 +40,11 @@ const handle = document.querySelector<HTMLElement>('[data-drag-handle]')!;
 
 let state: WidgetState | null = null;
 let pendingRevision = 0;
+let pointerEnabled = false;
+let pointerToggle = Promise.resolve();
+let diagnosticTimes: number[] = [];
+let diagnosticDropped = 0;
+let diagnosticDroppedTimer: number | undefined;
 const appWindow = getCurrentWindow();
 const ownId = widgetIdFromLabel(appWindow.label);
 const origin = contentOrigin(window.location);
@@ -50,6 +62,10 @@ const dragSession = createDragSession(
   () => invoke<void>('end_widget_drag'),
 );
 let activeDrag: DragSignal | null = null;
+const animationHost = createAnimationHost(postToWidget);
+animationHost.setVisible(!document.hidden);
+document.addEventListener('visibilitychange', () => animationHost.setVisible(!document.hidden));
+window.addEventListener('pagehide', () => animationHost.reset());
 
 function apply(next: WidgetState) {
   // The label, not the first event, decides which widget this window shows.
@@ -69,7 +85,10 @@ function apply(next: WidgetState) {
   handle.hidden = next.dragMode === 'all';
   if (reload || sandboxChanged) {
     dragSession.cancel();
+    animationHost.reset();
+    setPointerTracking(false);
     pendingRevision = next.revision;
+    diagnosticTimes = [];
     frame.src = widgetUrl(origin, next.id, next.revision, next.token);
   }
   document.title = next.title || 'aidget';
@@ -82,6 +101,39 @@ function apply(next: WidgetState) {
   // state push, because a reloaded iframe starts from an empty list.
   postToWidget(permissionsMessage(next.permissions));
   postDragConfig();
+}
+
+function setPointerTracking(enabled: boolean) {
+  if (pointerEnabled === enabled) {
+    return;
+  }
+  pointerEnabled = enabled;
+  pointerToggle = pointerToggle
+    .then(() => invoke<void>('widget_pointer_tracking', { enabled }))
+    .catch((error) => {
+      console.error('pointer tracking failed', error);
+      if (pointerEnabled === enabled) {
+        pointerEnabled = false;
+      }
+    });
+}
+
+function recordDiagnosticDropped(count: number) {
+  diagnosticDropped = Math.min(1_000_000, diagnosticDropped + count);
+  if (diagnosticDroppedTimer !== undefined) {
+    return;
+  }
+  diagnosticDroppedTimer = window.setTimeout(() => {
+    diagnosticDroppedTimer = undefined;
+    const dropped = diagnosticDropped;
+    diagnosticDropped = 0;
+    if (!dropped) {
+      return;
+    }
+    void invoke('widget_diagnostic_dropped', { dropped }).catch(() => {
+      // Diagnostics are optional and cannot take down a widget.
+    });
+  }, 0);
 }
 
 function postDragConfig() {
@@ -103,7 +155,24 @@ function showFault(message: string) {
   fault.hidden = false;
 }
 
-frame.addEventListener('error', () => showFault('无法读取小组件文件'));
+frame.addEventListener('error', () => {
+  animationHost.reset();
+  setPointerTracking(false);
+  showFault('无法读取小组件文件');
+  if (state) {
+    void invoke('widget_diagnostic', {
+      event: {
+        source: 'resource_error',
+        revision: state.revision,
+        message: 'widget document failed to load',
+        stack: null,
+        filename: 'index.html',
+        line: null,
+        column: null,
+      },
+    }).catch(() => {});
+  }
+});
 frame.addEventListener('load', () => {
   if (pendingRevision) {
     void invoke('widget_loaded', { revision: pendingRevision }).catch(() => {
@@ -115,6 +184,12 @@ frame.addEventListener('load', () => {
   // push it on each load rather than only the ones this page triggered.
   if (state) {
     postToWidget(permissionsMessage(state.permissions));
+    postToWidget({
+      source: 'aidget-host',
+      type: 'diagnostics-enabled',
+      revision: state.revision,
+      token: state.token,
+    });
   }
   postDragConfig();
 });
@@ -163,6 +238,51 @@ window.addEventListener('pagehide', () => dragSession.cancel());
 // Host side of the widget bridge: only the iframe this window owns may ask,
 // and only for methods the host actually implements.
 window.addEventListener('message', (event) => {
+  const diagnosticReady = parseDiagnosticReady(event.data, event.source, frame.contentWindow);
+  if (diagnosticReady) {
+    if (state?.revision === diagnosticReady.revision && state.token === diagnosticReady.token) {
+      void invoke('widget_diagnostic_ready', {
+        revision: diagnosticReady.revision,
+      }).catch(() => {});
+    }
+    return;
+  }
+  const diagnosticDroppedSignal = parseDiagnosticDropped(
+    event.data,
+    event.source,
+    frame.contentWindow,
+  );
+  if (diagnosticDroppedSignal) {
+    if (
+      state?.revision === diagnosticDroppedSignal.revision &&
+      state.token === diagnosticDroppedSignal.token
+    ) {
+      recordDiagnosticDropped(diagnosticDroppedSignal.dropped);
+    }
+    return;
+  }
+  const diagnostic = parseDiagnostic(event.data, event.source, frame.contentWindow);
+  if (diagnostic) {
+    if (state?.revision !== diagnostic.revision || state.token !== diagnostic.token) {
+      return;
+    }
+    const now = performance.now();
+    diagnosticTimes = diagnosticTimes.filter((time) => now - time < 1_000);
+    if (diagnosticTimes.length >= 20) {
+      recordDiagnosticDropped(1);
+      return;
+    }
+    diagnosticTimes.push(now);
+    void invoke('widget_diagnostic', { event: diagnostic.event }).catch(() => {
+      // Diagnostics are optional and cannot take down a widget request.
+    });
+    return;
+  }
+  const animation = parseAnimationRequest(event, frame.contentWindow, state);
+  if (animation) {
+    animationHost.accept(animation);
+    return;
+  }
   const drag = parseDragSignal(event, frame.contentWindow, state);
   if (drag) {
     if (drag.phase === 'cancel') {
@@ -171,6 +291,13 @@ window.addEventListener('message', (event) => {
       }
     } else {
       void startDrag(drag).catch((error) => showFault(String(error)));
+    }
+    return;
+  }
+  const pointer = parsePointerSubscription(event.data, event.source, frame.contentWindow);
+  if (pointer) {
+    if (state?.revision === pointer.revision && state.token === pointer.token) {
+      setPointerTracking(pointer.enabled);
     }
     return;
   }
@@ -232,6 +359,20 @@ void listen<string>(
   'aidget://fault',
   (event) => {
     showFault(event.payload);
+  },
+  { target: widgetEventTarget(appWindow.label) },
+);
+
+void listen<unknown>(
+  'aidget://pointer',
+  (event) => {
+    if (!pointerEnabled || !state) {
+      return;
+    }
+    const pointer = parsePointerEvent(event.payload);
+    if (pointer) {
+      postToWidget(pointerMessage(pointer, state.revision, state.token));
+    }
   },
   { target: widgetEventTarget(appWindow.label) },
 );

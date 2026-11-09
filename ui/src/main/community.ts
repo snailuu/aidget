@@ -10,6 +10,7 @@ import type {
   PackageAuthor,
 } from '../types/rust';
 import type { Language } from '../types/rust';
+import { closeDialog, openDialog, setupDialogAnimation } from '../utils/dialog';
 import { createCommunityCard } from './community-card';
 import { createCommunityMedia } from './community-media';
 import { createCommunitySort } from './community-sort';
@@ -27,6 +28,9 @@ export function weeklyDownloads(value: number | null, locale: string) {
     new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(value / divisor) + suffix
   );
 }
+export function hostPermitsInstall(compatibility: CommunityEntry['hostCompatibility']) {
+  return compatibility.state === 'compatible' || compatibility.allowedByOverride;
+}
 function authorName(author: PackageAuthor | null) {
   return typeof author === 'string' ? author : (author?.name ?? '');
 }
@@ -37,6 +41,7 @@ export function createCommunityPage(
   installed: () => Promise<void>,
   hasGithubToken: () => boolean,
   notify: (message: string) => void,
+  onUpdate: () => void,
 ) {
   let snapshot: CommunitySnapshot | undefined;
   let loading = false;
@@ -111,6 +116,7 @@ export function createCommunityPage(
   dialog.className = 'community-dialog';
   dialog.tabIndex = -1;
   dialog.setAttribute('aria-labelledby', 'community-detail-title');
+  setupDialogAnimation(dialog);
   header.append(heading);
   root.replaceChildren(banner, header, toolbar, status, grid, dialog);
   refresh.addEventListener('click', () => void load());
@@ -141,7 +147,12 @@ export function createCommunityPage(
     button.type = 'button';
     button.className = 'community-install secondary-button';
     button.textContent = actionLabel(entry);
-    button.disabled = !!installing || entry.installed || entry.idConflict || !entry.supported;
+    button.disabled =
+      !!installing ||
+      entry.installed ||
+      entry.idConflict ||
+      !entry.supported ||
+      !hostPermitsInstall(entry.hostCompatibility);
     button.addEventListener('click', () => {
       void install(entry, commit);
     });
@@ -196,7 +207,8 @@ export function createCommunityPage(
         !!installing ||
         selected.entry.installed ||
         selected.entry.idConflict ||
-        !selected.entry.supported;
+        !selected.entry.supported ||
+        !hostPermitsInstall(selected.entry.hostCompatibility);
       dialog.querySelector('.community-install-error')!.textContent = installError;
     }
   }
@@ -265,7 +277,18 @@ export function createCommunityPage(
     identity.textContent = `${authorName(pkg.author)} · ${pkg.name} · v${pkg.version}`;
     detailLocale = locale();
     const previousMedia = detailMedia.splice(0);
-    const content = renderWidgetDetailsContent(config, pkg.description, [], locale());
+    const content = renderWidgetDetailsContent(
+      config,
+      entry.hostCompatibility,
+      pkg.description,
+      [],
+      locale(),
+      async () => {
+        selected = undefined;
+        await closeDialog(dialog);
+        onUpdate();
+      },
+    );
     for (const [index, path] of config.screenshots.entries()) {
       let view = previousMedia[index];
       if (view) {
@@ -284,7 +307,7 @@ export function createCommunityPage(
     close.type = 'button';
     close.className = 'community-dialog-close';
     close.textContent = t('communityClose');
-    close.addEventListener('click', () => dialog.close());
+    close.addEventListener('click', () => void closeDialog(dialog));
     const error = document.createElement('p');
     error.textContent = installError;
     error.className = 'community-install-error';
@@ -301,9 +324,8 @@ export function createCommunityPage(
     installError = '';
     selected = { entry, commit };
     renderDetails(entry, selected.commit);
-    dialog.showModal();
+    openDialog(dialog);
     media.retryFailed(entry, selected.commit);
-    dialog.focus();
   }
   async function install(entry: CommunityEntry, commit: string) {
     if (!snapshot || installing) {
@@ -322,7 +344,7 @@ export function createCommunityPage(
         current.installed = true;
       }
       await installed();
-      dialog.close();
+      await closeDialog(dialog);
       notify(t('communityInstalledNotice'));
     } catch (error) {
       installError = `${t('communityInstallFailed')}: ${String(error)}`;
@@ -455,7 +477,7 @@ export function createCommunityPage(
       visible = false;
       media.setActive(false);
       if (dialog.open) {
-        dialog.close();
+        void closeDialog(dialog);
       }
     },
     /** Recompute local availability; credentials additionally invalidate the check interval. */

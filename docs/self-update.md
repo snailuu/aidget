@@ -251,16 +251,18 @@ Release asset names omit the version:
 | --------------------------------------- | -------------------------- | ------------------------------------------- | ----------------------------- |
 | macOS Apple Silicon                     | `aidget-darwin-arm64.zip`  | Unpack and replace the `.app`, then restart | Replace the `.app`, then exit |
 | macOS Intel                             | `aidget-darwin-amd64.zip`  | Unpack and replace the `.app`, then restart | Replace the `.app`, then exit |
-| Windows                                 | `aidget-windows-amd64.exe` | Run NSIS with restart                       | Run NSIS without restart      |
+| Windows x64                             | `aidget-windows-amd64.exe` | Run NSIS with restart                       | Run NSIS without restart      |
+| Windows ARM64                           | `aidget-windows-arm64.exe` | Run NSIS with restart                       | Run NSIS without restart      |
 | Linux x86_64 with `dpkg`                | `aidget-linux-amd64.deb`   | `pkexec dpkg -i`, then restart              | Skipped                       |
 | Linux x86_64 without `dpkg`, with `rpm` | `aidget-linux-amd64.rpm`   | `pkexec rpm -U`, then restart               | Skipped                       |
+| Linux ARM64 with `dpkg`                 | `aidget-linux-arm64.deb`   | `pkexec dpkg -i`, then restart              | Skipped                       |
+| Linux ARM64 without `dpkg`, with `rpm`  | `aidget-linux-arm64.rpm`   | `pkexec rpm -U`, then restart               | Skipped                       |
 
-macOS supports the two released architectures. The Windows target is
-`aidget-windows-amd64.exe`; there is no runtime architecture branch. Linux
-requires x86_64 and detects `dpkg` and `rpm` on `PATH`; `dpkg` wins when both
-exist. A platform, architecture, or package-manager combination without an
-updater asset can still check the feed, but downloading reports that the
-installation cannot update itself in place.
+Windows and Linux select the updater for their runtime architecture. Linux
+detects `dpkg` and `rpm` on `PATH`; `dpkg` wins when both exist. A platform,
+architecture, or package-manager combination without an updater asset can still
+check the feed, but downloading reports that the installation cannot update
+itself in place.
 
 DMGs are for manual installation only. `SHA256SUMS` covers every updater asset.
 There is no AppImage updater asset.
@@ -306,11 +308,15 @@ replacement, so the saved install path remains the launch path.
 
 ### Restart
 
-For macOS and Linux manual updates, Aidget launches `/bin/sh` with a command that
-waits for the old PID, then `exec`s the saved executable with the original
-arguments and appends output to `aidget-relaunch.log` in the temporary
-directory. It does not use `open -a`, so another copy with the same bundle
-identifier cannot be activated instead.
+For macOS and Linux manual updates, a `/bin/sh` helper waits for the old process
+to exit, then `exec`s the saved executable with its original arguments. Output
+is appended to `<home>/logs/relaunch.log` under the current instance's data
+directory, including a custom `--home`; `logs/` is created automatically. Starting
+the saved executable directly avoids activating another bundle with the same
+identifier.
+
+Zombies count as exited because they have released IPC. CLI/MCP parents reap GUI
+children on a background thread.
 
 On Windows the NSIS installer performs the restart. If scheduling the
 macOS/Linux replacement fails, Aidget reports that the update is in place but
@@ -404,11 +410,11 @@ handling, asset selection, release-notes caching, the macOS bundle swap, Linux
 package commands, Windows installer arguments, and relaunch ordering. They do
 not contact GitHub.
 
-CI compiles and tests the platform-gated paths on macOS, Windows, and Linux, but
-the automated suite does not perform a real NSIS installation, answer a Linux
-`pkexec` prompt, or install from a read-only/DMG location. macOS and Windows
-release artifacts are currently unsigned, so Gatekeeper or SmartScreen may still
-warn on first launch.
+CI compiles and tests the platform-gated paths on macOS, Windows, and Linux,
+including native Windows ARM64 and Linux ARM64 runners, but the automated suite
+does not perform a real NSIS installation, answer a Linux `pkexec` prompt, or
+install from a read-only/DMG location. macOS and Windows release artifacts are
+currently unsigned, so Gatekeeper or SmartScreen may still warn on first launch.
 
 The updater has no:
 

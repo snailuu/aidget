@@ -30,6 +30,7 @@ const snapshot: CommunitySnapshot = {
         config: {
           id: 'clock',
           title: 'Clock',
+          minHostVersion: '0.1.1',
           logo: null,
           screenshots: ['assets/screen.png'],
           platforms: ['macos', 'linux', 'windows'],
@@ -43,6 +44,12 @@ const snapshot: CommunitySnapshot = {
       installed: false,
       idConflict: false,
       supported: true,
+      hostCompatibility: {
+        state: 'compatible',
+        currentVersion: '0.1.12',
+        minHostVersion: '0.1.1',
+        allowedByOverride: false,
+      },
     },
   ],
 };
@@ -86,17 +93,55 @@ function page(hasGithubToken = false) {
   document.body.append(root);
   const installed = vi.fn(async () => {});
   const notify = vi.fn();
+  const update = vi.fn();
   const page = createCommunityPage(
     root,
     () => 'en-US',
     installed,
     () => hasGithubToken,
     notify,
+    update,
   );
   page.show();
-  return { root, page, installed, notify };
+  return { root, page, installed, notify, update };
 }
 describe('community cards', () => {
+  it('disables incompatible installs while keeping version guidance in details', async () => {
+    const original = mocks.invoke.getMockImplementation()!;
+    const incompatible = structuredClone(snapshot);
+    incompatible.widgets[0].hostCompatibility = {
+      state: 'host_too_old',
+      currentVersion: '0.1.11',
+      minHostVersion: '0.1.12',
+      allowedByOverride: false,
+    };
+    mocks.invoke.mockImplementation((command: string, args: unknown) => {
+      if (command === 'community_list' || command === 'community_cached') {
+        return Promise.resolve(command === 'community_cached' ? null : incompatible);
+      }
+      return original(command, args);
+    });
+    const { root, update } = page();
+    await vi.waitFor(() => expect(root.querySelector('article')).toBeTruthy());
+    expect(
+      root.querySelector<HTMLButtonElement>('.community-card .community-install')!.disabled,
+    ).toBe(true);
+    expect(root.textContent).not.toContain('Aidget version');
+    root.querySelector<HTMLButtonElement>('.community-name')!.click();
+    await vi.waitFor(() => expect(root.querySelector('dialog')?.open).toBe(true));
+    expect(root.querySelector('dialog')?.textContent).toContain('Minimum Aidget version');
+    expect(root.querySelector('dialog')?.textContent).toContain(
+      'This widget does not support the current aidget version. Update first.',
+    );
+    expect(root.querySelector<HTMLButtonElement>('dialog .community-install')!.disabled).toBe(true);
+    root.querySelector<HTMLButtonElement>('.community-host-incompatible button')!.click();
+    await vi.waitFor(() => expect(root.querySelector('dialog')?.open).toBe(false));
+    expect(update).toHaveBeenCalledOnce();
+    expect(
+      mocks.invoke.mock.calls.filter(([command]) => command === 'community_install'),
+    ).toHaveLength(0);
+  });
+
   it.each(['.community-name', '.community-preview-button', '.community-install'])(
     'retries failed media when opening details through %s without showing a retry button',
     async (trigger) => {
@@ -218,7 +263,7 @@ describe('community cards', () => {
       }),
     );
     await vi.waitFor(() => expect(installed).toHaveBeenCalled());
-    expect(notify).toHaveBeenCalledWith('Installed in Local Widgets');
+    await vi.waitFor(() => expect(notify).toHaveBeenCalledWith('Installed in Local Widgets'));
     expect(root.querySelector('.community-install')?.textContent).toBe('Installed');
   });
   it('pins install in the dialog header and close as a text action in the footer', async () => {
@@ -263,7 +308,7 @@ describe('community cards', () => {
     const dialog = root.querySelector('dialog')!;
     expect(dialog.open).toBe(true);
     (dialog.querySelector('.community-dialog-close') as HTMLButtonElement).click();
-    expect(dialog.open).toBe(false);
+    await vi.waitFor(() => expect(dialog.open).toBe(false));
   });
   it('places the detail description after the screenshot gallery', async () => {
     const { root } = page();
@@ -272,7 +317,9 @@ describe('community cards', () => {
     const images = root.querySelector('dialog .community-detail-images')!;
     const description = root.querySelector('dialog .community-detail-description');
     expect(description).toBeTruthy();
-    expect(images.nextElementSibling).toBe(description);
+    expect(images.compareDocumentPosition(description!) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
   });
   it('shows empty permissions and network access in the confirmation only', async () => {
     const withoutPermissions = structuredClone(snapshot);
@@ -460,6 +507,7 @@ describe('community discovery controls', () => {
       () => locale,
       async () => {},
       () => false,
+      vi.fn(),
       vi.fn(),
     );
     controller.show();

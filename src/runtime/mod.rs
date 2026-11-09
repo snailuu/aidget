@@ -1,3 +1,4 @@
+pub mod autostart;
 pub mod bridge_script;
 pub mod command_access;
 pub mod command_names;
@@ -6,6 +7,7 @@ pub mod location;
 pub mod main_startup;
 pub mod main_window_state;
 pub mod network;
+pub mod pointer;
 pub mod process;
 pub mod ui;
 pub mod update;

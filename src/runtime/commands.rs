@@ -12,6 +12,10 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         widget_state,
         widget_loaded,
         widget_ready,
+        widget_diagnostic,
+        widget_diagnostic_dropped,
+        widget_diagnostic_ready,
+        widget_pointer_tracking,
         persist_window_position,
         begin_widget_drag,
         start_widget_drag,
@@ -75,6 +79,48 @@ fn widget_ready(
     revision: u64,
 ) -> std::result::Result<(), String> {
     ui::mark_ready(&app, &window, revision).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn widget_diagnostic(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+    event: ui::DiagnosticInput,
+) -> std::result::Result<(), String> {
+    ui::record_diagnostic(&app, &window, event).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn widget_diagnostic_ready(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+    revision: u64,
+) -> std::result::Result<(), String> {
+    ui::mark_diagnostics_ready(&app, &window, revision).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn widget_diagnostic_dropped(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+    dropped: u64,
+) -> std::result::Result<(), String> {
+    ui::record_diagnostics_dropped(&app, &window, dropped).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn widget_pointer_tracking(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+    enabled: bool,
+) -> std::result::Result<(), String> {
+    if enabled {
+        let id = ui::widget_id(&window).map_err(|error| error.to_string())?;
+        let root = app.state::<ui::UiState>().root.lock().unwrap().clone();
+        crate::runtime::pointer::require_script(&Store::new(root), &id)
+            .map_err(|error| error.to_string())?;
+    }
+    crate::runtime::pointer::set_enabled(&app, &window, enabled).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -172,10 +218,13 @@ async fn main_widget_details(
 ) -> std::result::Result<ui::LocalWidgetDetails, String> {
     ui::require_main_window_label(window.label()).map_err(|error| error.to_string())?;
     let root = app.state::<ui::UiState>().root.lock().unwrap().clone();
-    tauri::async_runtime::spawn_blocking(move || ui::local_widget_details(&Store::new(root), &id))
-        .await
-        .map_err(|error| error.to_string())?
-        .map_err(|error| error.to_string())
+    let allow_incompatible = app.state::<ui::UiState>().allow_incompatible_widgets;
+    tauri::async_runtime::spawn_blocking(move || {
+        ui::local_widget_details(&Store::new(root), &id, allow_incompatible)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -266,7 +315,13 @@ async fn move_widgets_to_default_display(
 
 #[tauri::command]
 async fn delete_widget(app: tauri::AppHandle, id: String) -> std::result::Result<(), String> {
-    ui::delete_widget(&app, &id).map_err(|error| error.to_string())
+    let result = ui::delete_widget(&app, &id).map_err(|error| error.to_string())?;
+    app.state::<ui::UiState>()
+        .diagnostics
+        .lock()
+        .unwrap()
+        .remove(&id);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -433,8 +488,10 @@ async fn community_list(
 ) -> std::result::Result<crate::community::model::CommunitySnapshot, String> {
     ui::require_main_window_label(window.label()).map_err(|e| e.to_string())?;
     let root = app.state::<ui::UiState>().root.lock().unwrap().clone();
+    let allow_incompatible = app.state::<ui::UiState>().allow_incompatible_widgets;
     tauri::async_runtime::spawn_blocking(move || {
-        crate::community::service::Community::for_store(&root)?.list(&Store::new(root))
+        crate::community::service::Community::for_store(&root)?
+            .list_with_override(&Store::new(root), allow_incompatible)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -448,8 +505,10 @@ async fn community_cached(
 ) -> std::result::Result<Option<crate::community::model::CachedCommunitySnapshot>, String> {
     ui::require_main_window_label(window.label()).map_err(|e| e.to_string())?;
     let root = app.state::<ui::UiState>().root.lock().unwrap().clone();
+    let allow_incompatible = app.state::<ui::UiState>().allow_incompatible_widgets;
     tauri::async_runtime::spawn_blocking(move || {
-        crate::community::service::Community::for_store(&root)?.cached(&Store::new(root))
+        crate::community::service::Community::for_store(&root)?
+            .cached_with_override(&Store::new(root), allow_incompatible)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -490,12 +549,14 @@ async fn community_install(
 ) -> std::result::Result<(), String> {
     ui::require_main_window_label(window.label()).map_err(|e| e.to_string())?;
     let root = app.state::<ui::UiState>().root.lock().unwrap().clone();
+    let allow_incompatible = app.state::<ui::UiState>().allow_incompatible_widgets;
     let install_root = root.clone();
     let meta = tauri::async_runtime::spawn_blocking(move || {
-        crate::community::service::Community::for_store(&root)?.install_reviewed(
+        crate::community::service::Community::for_store(&root)?.install_reviewed_with_override(
             &Store::new(root),
             &commit,
             &package,
+            allow_incompatible,
         )
     })
     .await

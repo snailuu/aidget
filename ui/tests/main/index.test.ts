@@ -3,6 +3,7 @@
 import { readFileSync } from 'node:fs';
 
 import type { EventCallback } from '@tauri-apps/api/event';
+import { enable, isEnabled } from '@tauri-apps/plugin-autostart';
 import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
 import type { IntegrationInfo } from '../../src/main/integration';
@@ -119,13 +120,16 @@ function prepareDocument() {
   });
 }
 
-async function loadMain(initial: MainState) {
+async function loadMain(initial: MainState, isDebugBuild = false) {
   mocks.invoke.mockImplementation((command: string, args?: { preferences?: unknown }) => {
     if (command === 'main_state') {
       return Promise.resolve(initial);
     }
     if (command === 'main_painted') {
       return Promise.resolve(true);
+    }
+    if (command === 'update_state') {
+      return Promise.resolve({ state: 'idle', isDebugBuild, notes: null });
     }
     if (command === 'set_preferences') {
       return Promise.resolve();
@@ -149,7 +153,43 @@ beforeEach(() => {
   mocks.invoke.mockReset();
   mocks.listen.mockClear();
   mocks.openUrl.mockReset().mockResolvedValue(undefined);
+  vi.mocked(enable).mockClear();
+  vi.mocked(isEnabled).mockReset().mockResolvedValue(false);
   prepareDocument();
+});
+
+describe('launch at login', () => {
+  it('keeps development autostart disabled and explains why in the selected language', async () => {
+    const initial = state('general');
+    initial.language = 'zh-CN';
+    vi.mocked(isEnabled).mockResolvedValue(true);
+    await loadMain(initial, true);
+    const toggle = document.querySelector<HTMLButtonElement>('[data-autostart]')!;
+    const note = document.querySelector<HTMLElement>('[data-autostart-debug-note]')!;
+    await vi.waitFor(() => expect(toggle.disabled).toBe(true));
+    expect(toggle.getAttribute('aria-checked')).toBe('false');
+    expect(note.hidden).toBe(false);
+    expect(note.textContent).toBe('开发版不支持开机自启');
+    toggle.click();
+    expect(enable).not.toHaveBeenCalled();
+
+    const language = document.querySelector<HTMLSelectElement>('[data-language]')!;
+    language.value = 'en-US';
+    language.dispatchEvent(new Event('change'));
+    await vi.waitFor(() =>
+      expect(note.textContent).toBe('Development builds cannot launch at login'),
+    );
+    expect(toggle.disabled).toBe(true);
+  });
+
+  it('retains the native autostart state and switch for release builds', async () => {
+    vi.mocked(isEnabled).mockResolvedValue(true);
+    await loadMain(state('general'));
+    const toggle = document.querySelector<HTMLButtonElement>('[data-autostart]')!;
+    await vi.waitFor(() => expect(toggle.getAttribute('aria-checked')).toBe('true'));
+    expect(toggle.disabled).toBe(false);
+    expect(document.querySelector<HTMLElement>('[data-autostart-debug-note]')!.hidden).toBe(true);
+  });
 });
 
 describe('update row', () => {
@@ -417,6 +457,9 @@ describe('main window navigation', () => {
     ];
     const rejectPreviews: ((reason?: unknown) => void)[] = [];
     mocks.invoke.mockImplementation((command: string) => {
+      if (command === 'update_state') {
+        return Promise.resolve({ state: 'idle', isDebugBuild: false, notes: null });
+      }
       if (command === 'main_state') {
         return Promise.resolve(initial);
       }
@@ -742,6 +785,7 @@ it('opens local details from the card, preview or title without intercepting car
     config: {
       id: 'clock',
       title: 'Clock',
+      minHostVersion: '0.1.1',
       logo: null,
       screenshots: [],
       platforms: ['macos'],
@@ -749,6 +793,12 @@ it('opens local details from the card, preview or title without intercepting car
       dragMode: 'all',
       permissions: [],
       network: [],
+    },
+    compatibility: {
+      state: 'compatible',
+      currentVersion: '0.1.12',
+      minHostVersion: '0.1.1',
+      allowedByOverride: false,
     },
     description: null,
     preview: null,
@@ -771,7 +821,7 @@ it('opens local details from the card, preview or title without intercepting car
   expect(dialog.querySelector('.community-dialog-header button')).toBeNull();
   expect(dialog.querySelector('.community-permissions-empty')?.textContent).toBe('无特殊权限');
   dialog.querySelector<HTMLButtonElement>('.community-dialog-close')!.click();
-  expect(dialog.open).toBe(false);
+  await vi.waitFor(() => expect(dialog.open).toBe(false));
   const count = mocks.invoke.mock.calls.filter(
     ([command]) => command === 'main_widget_details',
   ).length;
@@ -786,6 +836,58 @@ it('opens local details from the card, preview or title without intercepting car
   card.querySelector<HTMLButtonElement>('.widget-title')!.click();
   await vi.waitFor(() => expect(dialog.open).toBe(true));
   dialog.querySelector<HTMLButtonElement>('.community-dialog-close')!.click();
+});
+
+it('navigates from an incompatible widget detail to the About update action', async () => {
+  const initial = state('local-widgets');
+  initial.widgets = [
+    {
+      id: 'clock',
+      title: 'Clock',
+      packageName: null,
+      revision: 1,
+      token: 'token',
+      width: 360,
+      height: 220,
+      enabled: false,
+      createdAt: 1,
+      display: 'primary',
+      pinnedDisplay: null,
+    },
+  ];
+  await loadMain(initial);
+  const details = {
+    config: {
+      id: 'clock',
+      title: 'Clock',
+      minHostVersion: '99.0.0',
+      logo: null,
+      screenshots: [],
+      platforms: ['macos'],
+      size: { width: 360, height: 220 },
+      dragMode: 'all',
+      permissions: [],
+      network: [],
+    },
+    compatibility: {
+      state: 'host_too_old',
+      currentVersion: '0.1.12',
+      minHostVersion: '99.0.0',
+      allowedByOverride: false,
+    },
+    description: null,
+    preview: null,
+  };
+  mocks.invoke.mockImplementation((command: string) =>
+    Promise.resolve(command === 'main_widget_details' ? details : null),
+  );
+  document.querySelector<HTMLElement>('[data-widget="clock"]')!.click();
+  const dialog = document.querySelector<HTMLDialogElement>('.local-widget-dialog')!;
+  await vi.waitFor(() => expect(dialog.open).toBe(true));
+  dialog.querySelector<HTMLButtonElement>('.community-host-incompatible button')!.click();
+  await vi.waitFor(() => expect(pageButton('about').getAttribute('aria-current')).toBe('page'));
+  expect(document.activeElement).toBe(document.querySelector<HTMLElement>('[data-update-action]'));
+  expect(mocks.invoke.mock.calls.filter(([command]) => command === 'update_check')).toHaveLength(0);
 });
 
 describe('automatic download preference ownership', () => {

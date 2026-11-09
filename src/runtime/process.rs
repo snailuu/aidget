@@ -107,20 +107,28 @@ pub fn publish_cli(root: &Path) -> Result<()> {
 
 /// Spawn `aidget ui` in its own session so it survives the calling
 /// CLI/MCP process and any terminal that started it.
-pub fn spawn_ui(root: &Path) -> Result<()> {
-    let mut command = ui_command(root)?;
+pub fn spawn_ui(root: &Path, allow_incompatible_widgets: bool) -> Result<()> {
+    let mut command = ui_command(root, allow_incompatible_widgets)?;
     command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    command
+    let mut child = command
         .spawn()
         .map_err(|error| Error::Other(format!("cannot start aidget ui: {error}")))?;
+    // Reap asynchronously so a long-lived MCP parent never leaves GUI zombies.
+    std::thread::Builder::new()
+        .name("aidget-ui-reaper".into())
+        .spawn(move || {
+            if let Err(error) = child.wait() {
+                eprintln!("aidget: cannot reap the GUI process: {error}");
+            }
+        })?;
     Ok(())
 }
 
 /// Build a detached GUI command bound to an absolute data directory.
-pub fn ui_command(root: &Path) -> Result<Command> {
+pub fn ui_command(root: &Path, allow_incompatible_widgets: bool) -> Result<Command> {
     let exe = std::env::current_exe()?;
     let mut command = Command::new(exe);
     command
@@ -128,6 +136,9 @@ pub fn ui_command(root: &Path) -> Result<Command> {
         .arg(std::path::absolute(root)?)
         .arg("ui")
         .arg("--no-main-window");
+    if cfg!(debug_assertions) && allow_incompatible_widgets {
+        command.arg("--allow-incompatible-widgets");
+    }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -154,11 +165,19 @@ pub fn ui_command(root: &Path) -> Result<Command> {
 
 /// Start the resident UI when absent and require a real bridge response.
 pub fn ensure_ui(client: &crate::transport::client::Client, root: &Path) -> Result<()> {
+    ensure_ui_with_override(client, root, false)
+}
+
+pub fn ensure_ui_with_override(
+    client: &crate::transport::client::Client,
+    root: &Path,
+    allow_incompatible_widgets: bool,
+) -> Result<()> {
     if client.is_running() {
         return Ok(());
     }
     if !client.is_connectable() {
-        spawn_ui(root)?;
+        spawn_ui(root, allow_incompatible_widgets)?;
     }
     if !client.wait_ready(std::time::Duration::from_secs(12)) {
         return Err(crate::Error::Timeout);

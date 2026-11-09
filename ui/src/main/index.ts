@@ -21,7 +21,7 @@ import {
   X,
 } from 'lucide';
 
-import type { Language } from '../types/rust';
+import type { Language, UpdateSnapshot } from '../types/rust';
 import { renderAgentStrip } from './agent-controls';
 import { createCommunityPage } from './community';
 import { confirmAction } from './confirm-dialog';
@@ -211,6 +211,7 @@ const community = createCommunityPage(
   refreshState,
   () => Boolean(state?.githubToken),
   (message) => toast.show(message),
+  navigateToAbout,
 );
 
 const previewRefresh = createPreviewRefresh(
@@ -238,6 +239,7 @@ widgetSortButton.prepend(createSortIcon());
 const localDetails = createLocalWidgetDetails(
   document.querySelector<HTMLElement>('[data-view="local-widgets"]')!,
   () => locale,
+  navigateToAbout,
 );
 
 function t(key: MessageKey) {
@@ -309,6 +311,16 @@ function renderPage() {
   renderPreferences();
   renderGithubToken();
   updatePage.setAboutActive(page === 'about');
+}
+
+function navigateToAbout() {
+  resetPurgeConfirmation();
+  page = 'about';
+  fault.hidden = true;
+  renderPage();
+  syncPreviewRefresh(true);
+  void rememberPage();
+  document.querySelector<HTMLElement>('[data-update-action]')?.focus();
 }
 
 function renderDescription() {
@@ -1331,10 +1343,21 @@ async function purgeDeletedWidget(view: DeletedWidgetView) {
 }
 
 async function initializeAutostart() {
-  autoStart.setAttribute('aria-checked', String(await isEnabled()));
+  const { isDebugBuild } = await invoke<UpdateSnapshot>('update_state');
+  document.querySelector<HTMLElement>('[data-autostart-debug-note]')!.hidden = !isDebugBuild;
+  if (isDebugBuild) {
+    autoStart.setAttribute('aria-describedby', 'autostart-debug-note');
+  } else {
+    autoStart.removeAttribute('aria-describedby');
+  }
+  autoStart.setAttribute('aria-checked', String(isDebugBuild ? false : await isEnabled()));
+  autoStart.disabled = isDebugBuild;
 }
 
 autoStart.addEventListener('click', async () => {
+  if (autoStart.disabled) {
+    return;
+  }
   autoStart.disabled = true;
   autoStart.setAttribute('aria-busy', 'true');
   fault.hidden = true;

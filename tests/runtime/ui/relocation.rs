@@ -25,6 +25,7 @@ fn frame(display: &str, pinned: Option<&str>) -> WidgetFrame {
         y: 24.0,
         w: 360.0,
         h: 220.0,
+        unplaced: false,
     }
 }
 

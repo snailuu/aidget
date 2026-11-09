@@ -51,21 +51,32 @@ fn run(cli: Cli) -> Result<()> {
     let store = cli.store()?;
     let json = cli.json;
     match cli.command {
-        None => run_ui(store, true, false),
+        None => run_ui(store, true, false, cli.allow_incompatible_widgets),
         Some(Command::Ui {
             background,
             no_main_window,
-        }) => run_ui(store, !background && !no_main_window, background),
-        Some(Command::Mcp) => run_mcp(store),
+        }) => run_ui(
+            store,
+            !background && !no_main_window,
+            background,
+            cli.allow_incompatible_widgets,
+        ),
+        Some(Command::Mcp) => run_mcp(store, cli.allow_incompatible_widgets),
         other => aidget::interfaces::cli::run(Cli {
             home: cli.home,
             command: other,
             json,
+            allow_incompatible_widgets: cli.allow_incompatible_widgets,
         }),
     }
 }
 
-fn run_ui(store: Store, show_main_window: bool, detach: bool) -> Result<()> {
+fn run_ui(
+    store: Store,
+    show_main_window: bool,
+    detach: bool,
+    allow_incompatible_widgets: bool,
+) -> Result<()> {
     store.ensure_layout()?;
     let store = store.canonicalized()?;
     aidget::widgets::migration::migrate_enabled(&store)?;
@@ -97,7 +108,7 @@ fn run_ui(store: Store, show_main_window: bool, detach: bool) -> Result<()> {
         ));
     }
     if detach {
-        return aidget::runtime::process::spawn_ui(store.root());
+        return aidget::runtime::process::spawn_ui(store.root(), allow_incompatible_widgets);
     }
 
     aidget::agents::skill::ensure_skill(&store)?;
@@ -114,6 +125,12 @@ fn run_ui(store: Store, show_main_window: bool, detach: bool) -> Result<()> {
     let app = tauri::Builder::default()
         .plugin(
             tauri_plugin_autostart::Builder::new()
+                // Development launches must not replace the installed app's login entry.
+                .app_name(if cfg!(debug_assertions) {
+                    "aidget-dev"
+                } else {
+                    "aidget"
+                })
                 .args([
                     "--home",
                     store.root().to_str().ok_or_else(|| {
@@ -126,10 +143,16 @@ fn run_ui(store: Store, show_main_window: bool, detach: bool) -> Result<()> {
         )
         .plugin(tauri_plugin_opener::init())
         .register_uri_scheme_protocol("aidget", move |ctx, request| {
-            aidget::transport::server::protocol::handle(&ctx, request, &store_for_protocol)
+            aidget::transport::server::protocol::handle_with_override(
+                &ctx,
+                request,
+                &store_for_protocol,
+                cfg!(debug_assertions) && allow_incompatible_widgets,
+            )
         })
         .invoke_handler(aidget::runtime::commands::handler())
         .setup(move |app| {
+            aidget::runtime::autostart::refresh(app.handle(), cfg!(debug_assertions))?;
             // Registered here rather than on the builder: the service has to be
             // told where to report before anything can publish a snapshot.
             let update_service = aidget::update::UpdateService::new(
@@ -145,7 +168,11 @@ fn run_ui(store: Store, show_main_window: bool, detach: bool) -> Result<()> {
             } else {
                 tauri::ActivationPolicy::Accessory
             });
-            ui::start(app.handle(), store_for_ui.clone())?;
+            ui::start(
+                app.handle(),
+                store_for_ui.clone(),
+                allow_incompatible_widgets,
+            )?;
             if show_main_window {
                 ui::show_main_now(app.handle())?;
             } else {
@@ -215,7 +242,7 @@ fn reopen_running_app(client: &aidget::transport::client::Client) -> Result<()> 
         .map(|_| ())
 }
 
-fn run_mcp(store: Store) -> Result<()> {
+fn run_mcp(store: Store, allow_incompatible_widgets: bool) -> Result<()> {
     store.ensure_layout()?;
     let store = store.canonicalized()?;
     aidget::widgets::migration::migrate_enabled(&store)?;
@@ -227,7 +254,10 @@ fn run_mcp(store: Store) -> Result<()> {
         .enable_all()
         .build()
         .map_err(|error| Error::Other(error.to_string()))?
-        .block_on(aidget::interfaces::mcp::serve(store))
+        .block_on(aidget::interfaces::mcp::serve_with_override(
+            store,
+            allow_incompatible_widgets,
+        ))
 }
 
 fn tray(app: &tauri::AppHandle) -> Result<()> {

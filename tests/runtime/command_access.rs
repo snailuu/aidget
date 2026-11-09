@@ -38,6 +38,24 @@ fn cached_community_catalogues_are_reserved_for_the_main_window() {
 }
 
 #[test]
+fn pointer_tracking_is_a_widget_command() {
+    assert!(WIDGET_COMMANDS.contains(&"widget_pointer_tracking"));
+    assert!(!MAIN_COMMANDS.contains(&"widget_pointer_tracking"));
+}
+
+#[test]
+fn diagnostic_collection_is_a_widget_command() {
+    for command in [
+        "widget_diagnostic",
+        "widget_diagnostic_dropped",
+        "widget_diagnostic_ready",
+    ] {
+        assert!(WIDGET_COMMANDS.contains(&command));
+        assert!(!MAIN_COMMANDS.contains(&command));
+    }
+}
+
+#[test]
 fn ipc_rejects_other_window_roles_before_host_reads_or_writes() {
     let effects = Arc::new(Mutex::new(Vec::new()));
     let seen = effects.clone();

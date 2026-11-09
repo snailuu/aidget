@@ -97,6 +97,7 @@ pub fn moved_frame(
         y: (position.1 - area_position.1) as f64 / scale,
         w: current.w,
         h: current.h,
+        unplaced: false,
         pinned_display: current.pinned_display.clone(),
     }
 }
@@ -244,10 +245,28 @@ fn overlap_area(left: LogicalRect<f64, f64>, right: LogicalRect<f64, f64>) -> f6
 /// Otherwise displays are tried by available area, and an overlapping-but-visible
 /// position is used only when no display has enough free space.
 pub fn place_new_widget(app: &AppHandle, store: &Store, id: &str) -> Result<()> {
+    let initial = store.load_board()?.widgets.get(id).cloned();
+    place_widget(app, store, id, initial)
+}
+
+/// Place a widget whose frame was written without the GUI, unless a move has
+/// cleared the mark since the caller read the board.
+pub(super) fn place_unplaced_widget(app: &AppHandle, store: &Store, id: &str) -> Result<()> {
+    match store.unplaced_frame(id)? {
+        Some(pending) => place_widget(app, store, id, Some(pending)),
+        None => Ok(()),
+    }
+}
+
+fn place_widget(
+    app: &AppHandle,
+    store: &Store,
+    id: &str,
+    initial: Option<WidgetFrame>,
+) -> Result<()> {
     let preferred = settings::load(store.root())?.default_display;
     let meta = store.load_meta(id)?;
     let board = store.load_board()?;
-    let initial = board.widgets.get(id).cloned();
     let enabled = enabled_ids(store)?;
     let (displays, primary_index) = connected_displays(app)?;
     let candidates: Vec<_> = displays
@@ -291,6 +310,7 @@ pub fn place_new_widget(app: &AppHandle, store: &Store, id: &str) -> Result<()> 
             y: placed.position.y,
             w: placed.size.width,
             h: placed.size.height,
+            unplaced: false,
             pinned_display: None,
         },
     )?;

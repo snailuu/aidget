@@ -59,6 +59,7 @@ notify the resident UI. A direct file write can race the watcher.
 {
   "id": "note",
   "title": "Note",
+  "minHostVersion": "0.1.1",
   "logo": null,
   "screenshots": [],
   "platforms": ["macos", "windows", "linux"],
@@ -70,6 +71,13 @@ notify the resident UI. A direct file write can race the watcher.
 ```
 
 - `platforms` lists the operating systems on which the widget was checked.
+- `minHostVersion` is a concrete SemVer release required by the widget. New
+  local widgets default to the version that created them. Community packages
+  must declare it. Version ranges, npm tags and a leading `v` are invalid.
+- If the running Aidget version is older than `minHostVersion`, the widget is
+  blocked from install and from running. Its files, storage and frame remain.
+- Historical local widgets without this field continue to run and show as
+  undeclared. Community installs without a declaration are rejected.
 - `size` is the initial logical size and must be between 160x120 and
   8192x8192.
 - `permissions` accepts `script`, `location` and `storage`.
@@ -80,6 +88,9 @@ notify the resident UI. A direct file write can race the watcher.
   and `enabled`; do not put these fields in community packages.
 - Unused fields are ignored. Missing required fields and invalid current values
   are rejected; unused fields never grant permissions or supply missing values.
+
+`aidget_create` and `aidget_update` accept `minHostVersion`. Update omits the
+field to preserve it. A patch never changes it.
 
 ## Enable and disable widgets
 
@@ -179,8 +190,8 @@ or refresh behavior change.
 ## window.aidget bridge
 
 Every bridge method below requires `script`. Additional grants are listed per
-method. Calls time out after 25 seconds unless the method documents a shorter
-limit.
+method. Request/response calls time out after 25 seconds unless the method documents
+a shorter limit. Pointer subscriptions and animation frames have no request timeout.
 
 ### `ready()`
 
@@ -199,6 +210,57 @@ window.aidget.permissions;
 
 Read-only array snapshot of the current declaration. It can initially be empty.
 Use it for display or branching, never as the authorization gate.
+
+### `onPointer(handler)`
+
+```js
+const stop = window.aidget.onPointer(({ type, x, y }) => {
+  // type: "enter" | "move" | "leave"
+});
+```
+
+Subscribes to pointer hover for this widget without requiring the desktop
+window to be active. Each call returns an independent, idempotent `stop()`
+function. Multiple listeners share one host subscription.
+
+`x` and `y` are CSS pixels relative to the widget viewport, with the origin at
+the top-left. `leave` carries the last in-window position. A listener that
+throws does not prevent other listeners from running.
+
+The host emits `enter`, `move`, and `leave` only. It does not report clicks,
+buttons, wheel input, touch, or pen. It also does not synthesize CSS `:hover`
+or a DOM `PointerEvent`; use this API to drive styles when the window is
+inactive. Clicking still follows normal window activation behavior.
+
+The tracking region is the full widget window, including transparent areas.
+An occluded widget receives nothing. When a listener subscribes while the
+pointer is already inside, no event is invented immediately; the next pointer
+movement starts with `enter`.
+
+### `requestAnimationFrame(callback)` and `cancelAnimationFrame(handle)`
+
+```js
+const handle = window.aidget.requestAnimationFrame((timestamp) => {
+  // Update animation styles using the document-relative timestamp.
+});
+window.aidget.cancelAnimationFrame(handle);
+```
+
+Requests one animation callback using the widget shell's rendering clock. This
+avoids WebKit's reduced frame rate for sandboxed iframes that have not received
+a user interaction. The browser's own `requestAnimationFrame` remains available.
+
+The returned handle belongs to this document and can be cancelled repeatedly.
+The callback receives milliseconds relative to this document's
+`performance.timeOrigin`, like `performance.now()`. Callbacks in one batch share
+a timestamp; callbacks requested during that batch run in a later frame. A
+callback that throws does not prevent the remaining callbacks from running.
+
+Only pending callbacks generate frame messages. Stop requesting frames when an
+animation settles. Hidden shell documents pause pending frames until visible;
+unloading the widget cancels its pending callbacks. Window blur does not pause
+this API. Actual frame rate depends on the WebView, display and system load.
+Use elapsed time for interpolation and cap long gaps when resuming.
 
 ### `requestLocation()`
 
@@ -307,6 +369,28 @@ Capture waits for the current iframe load and then up to 500ms for
 `window.aidget.ready()`. Slow initialization intentionally produces an early
 capture.
 
+## Runtime diagnostics
+
+As an optional final verification step after taking a screenshot, query the
+session diagnostics for the widget's current revision:
+
+```sh
+aidget widget diagnostics note --json
+```
+
+Use `aidget_diagnostics` from MCP. Records cover uncaught JavaScript errors,
+unhandled Promise rejections, calls to `console.error`, resource and CSP
+failures, and failed `window.aidget` requests. Each widget retains at most 100
+records per host session. Errors are cleared when Aidget exits or the widget is
+deleted.
+
+The result reports its session, revision, next cursor, dropped count and whether
+the collector is connected. No records means no observable error was collected;
+it does not prove that the widget is healthy. Errors caught by widget code and
+never logged cannot be detected automatically.
+Diagnostics are available through CLI and MCP only; the management window does
+not expose a diagnostics view.
+
 ## Platform capabilities
 
 | Capability     | macOS               | Windows             | Linux                                                               |
@@ -314,12 +398,15 @@ capture.
 | Screenshot     | WKWebView           | WebView2 DevTools   | WebKitGTK                                                           |
 | Location       | CoreLocation        | WinRT Geolocation   | GeoClue                                                             |
 | Native glass   | AppKit material     | Not available       | Not available                                                       |
+| Pointer hover  | AppKit tracking     | Win32 cursor track  | GTK motion events                                                   |
 | Network bridge | Native HTTPS client | Native HTTPS client | Native HTTPS client                                                 |
 | Placement      | User-controlled     | User-controlled     | Under Wayland, the compositor controls stacking and exact placement |
 
 New widgets are placed into the first free slot inside a display's work area,
 preferring the default display chosen in the main window's settings, then the
 primary display, and falling back to another display when needed.
+The CLI cannot measure displays, so with a default display chosen, a CLI-created
+widget is placed this way when the app first opens it, unless it was moved first.
 Later moves are user-owned and take precedence over automatic placement.
 
 A `board move` with a display, a drag to another display and the display menu on
@@ -353,5 +440,6 @@ package file is an error. Local cards do not display provenance badges.
 
 `ui_not_running`, `not_found`, `invalid_id`, `invalid_params`,
 `revision_conflict`, `region_not_found`, `region_ambiguous`,
-`permission_denied`, `denied`, `io_error`, `timeout`, `http_error`,
-`invalid_response`, `unavailable`.
+`host_version_incompatible`, `host_version_required`, `permission_denied`,
+`denied`, `io_error`, `timeout`, `http_error`, `invalid_response`,
+`unavailable`.

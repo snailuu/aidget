@@ -13,7 +13,7 @@ use crate::widgets::store::Store;
 
 use super::content::{content_token, signature, widget_surface, WidgetState};
 use super::drag::dragging_active;
-use super::geometry::physical_geometry;
+use super::geometry::{physical_geometry, place_unplaced_widget};
 use super::main_window::emit_main;
 #[cfg(target_os = "macos")]
 use super::native_surface;
@@ -57,7 +57,9 @@ fn sync_widgets_inner(app: &AppHandle) -> Result<()> {
     let state = app.state::<UiState>();
     let store = Store::new(state.root.lock().unwrap().clone());
     let board = store.load_board()?;
-    let ids = enabled_widget_ids(&store, &board);
+    let all_ids: HashSet<_> = store.widget_ids()?.into_iter().collect();
+    state.diagnostics.lock().unwrap().retain(&all_ids);
+    let ids = enabled_widget_ids(&store, &board, state.allow_incompatible_widgets)?;
     let active: HashSet<_> = ids.iter().cloned().collect();
     retain_widget_revisions(
         &mut state.loaded.lock().unwrap(),
@@ -72,6 +74,7 @@ fn sync_widgets_inner(app: &AppHandle) -> Result<()> {
     for id in existing {
         if !ids.contains(&id) {
             if let Some(window) = app.get_webview_window(&label(&id)) {
+                crate::runtime::pointer::detach(app, &window);
                 if let Err(error) = window.close() {
                     eprintln!("aidget: cannot close {id}: {error}");
                 }
@@ -134,9 +137,20 @@ fn sync_widgets_inner(app: &AppHandle) -> Result<()> {
             continue;
         }
 
-        let Some(frame) = board.widgets.get(&id).cloned() else {
+        let Some(mut frame) = board.widgets.get(&id).cloned() else {
             continue;
         };
+        if frame.unplaced {
+            // Without a display to place on, the next sync tries again.
+            if let Err(error) = place_unplaced_widget(app, &store, &id) {
+                eprintln!("aidget: cannot place {id}: {error}");
+                continue;
+            }
+            let Some(placed) = store.load_board()?.widgets.remove(&id) else {
+                continue;
+            };
+            frame = placed;
+        }
         let window = build_window(app, &id, &frame, &widget_state)?;
         apply_frame(app, &window, &frame)?;
         windows.insert(id.clone(), ());
@@ -150,13 +164,28 @@ fn sync_widgets_inner(app: &AppHandle) -> Result<()> {
     Ok(())
 }
 
-fn enabled_widget_ids(store: &Store, board: &Board) -> Vec<String> {
-    board
-        .widgets
-        .keys()
-        .filter(|id| store.load_meta(id).is_ok_and(|meta| meta.enabled))
-        .cloned()
-        .collect()
+fn enabled_widget_ids(
+    store: &Store,
+    board: &Board,
+    allow_incompatible: bool,
+) -> Result<Vec<String>> {
+    let mut ids = Vec::new();
+    for id in board.widgets.keys() {
+        let Ok(meta) = store.load_meta(id) else {
+            continue;
+        };
+        if meta.enabled
+            && crate::widgets::package::HostCompatibility::evaluate(
+                &meta.config,
+                env!("CARGO_PKG_VERSION"),
+                allow_incompatible,
+            )?
+            .permits_runtime()
+        {
+            ids.push(id.clone());
+        }
+    }
+    Ok(ids)
 }
 
 fn build_window(
@@ -209,6 +238,9 @@ fn build_window(
 
     #[cfg(target_os = "macos")]
     native_surface::apply(&window, state.surface)?;
+    if let Err(error) = crate::runtime::pointer::attach(app, &window) {
+        eprintln!("aidget: cannot track pointer for {id}: {error}");
+    }
 
     Ok(window)
 }
@@ -288,7 +320,16 @@ pub fn widget_payload(app: &AppHandle, window: &WebviewWindow) -> Option<WidgetS
     let id = label.strip_prefix("widget-")?;
     let store = Store::new(app.state::<UiState>().root.lock().unwrap().clone());
     let meta = store.load_meta(id).ok()?;
-    let _ = app;
+    if !crate::widgets::package::HostCompatibility::evaluate(
+        &meta.config,
+        env!("CARGO_PKG_VERSION"),
+        app.state::<UiState>().allow_incompatible_widgets,
+    )
+    .ok()?
+    .permits_runtime()
+    {
+        return None;
+    }
     let surface = widget_surface(&store, id);
     Some(WidgetState {
         id: id.to_string(),
